@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agon Agent Payments Competitive Landscape</title>
+    <style>
+      body {
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #16201d;
+        background: #f7f8f5;
+        margin: 0;
+      }
+      main {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 40px 20px 64px;
+      }
+      h1,
+      h2 {
+        line-height: 1.1;
+      }
+      h1 {
+        font-size: 34px;
+        margin: 0 0 10px;
+      }
+      h2 {
+        font-size: 22px;
+        margin-top: 34px;
+      }
+      p {
+        line-height: 1.55;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+        border: 1px solid #d9ded6;
+      }
+      th,
+      td {
+        border-bottom: 1px solid #e5e8e1;
+        padding: 10px 12px;
+        text-align: left;
+        vertical-align: top;
+        font-size: 14px;
+      }
+      th {
+        background: #edf1e9;
+      }
+      .callout {
+        border-left: 4px solid #2f6f5e;
+        background: #fff;
+        padding: 14px 16px;
+        margin: 22px 0;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 14px;
+      }
+      .panel {
+        background: #fff;
+        border: 1px solid #d9ded6;
+        padding: 14px 16px;
+      }
+      .small {
+        color: #56625d;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Agon Agent Payments Competitive Landscape</h1>
+      <p class="small">Prepared April 29, 2026. Scope: Solana-native high-frequency agent payments, cumulative commitments, batched settlement, clearing, and task escrow.</p>
+
+      <div class="callout">
+        <strong>Bottom line:</strong> the category is crowded at the HTTP/payment-envelope layer and now crowded at the batched nanopayment layer. Agon's viable wedge is not "x402 but smaller"; it is Solana-native clearing, multilateral netting, and escrow/accounting primitives that can sit underneath x402 or MPP.
+      </div>
+
+      <h2>Landscape Matrix</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>Status</th>
+            <th>Chain/Rail</th>
+            <th>Overlap With Agon</th>
+            <th>Strength</th>
+            <th>Weakness / Opening</th>
+            <th>Threat</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://developers.circle.com/gateway/nanopayments">Circle Gateway Nanopayments</a></td>
+            <td>Live docs</td>
+            <td>Gateway balance, EIP-3009, x402; nanopayments not marked supported on Solana in current chain table</td>
+            <td>Very high: off-chain authorizations, batched settlement, net balance updates</td>
+            <td>USDC issuer, cross-chain unified balance, strong trust/distribution, TEE-backed batching</td>
+            <td>Current nanopayment rail is Gateway-centric and EVM/EIP-3009 shaped; no Solana nanopayments support in supported-chain table</td>
+            <td>High</td>
+          </tr>
+          <tr>
+            <td><a href="https://web3.okx.com/de/onchainos/dev-docs/payments/methods-batch">OKX Onchain OS Batch</a></td>
+            <td>Available for HTTP sellers</td>
+            <td>X Layer/EVM, Agentic Wallet, Session Key, TEE aggregation</td>
+            <td>High concept overlap: post-pay high-frequency aggregation</td>
+            <td>Wallet distribution, broker role, APP framing, SDKs</td>
+            <td>Requires OKX Agentic Wallet; pay-as-you-go and escrow docs still coming soon</td>
+            <td>High</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/coinbase/x402">Coinbase x402</a></td>
+            <td>Live ecosystem</td>
+            <td>HTTP 402 envelope, extensible schemes, Base/Solana and more</td>
+            <td>Medium: mostly negotiation and exact settlement envelope</td>
+            <td>Standard momentum, facilitator ecosystem, simple integration</td>
+            <td>Does not itself prescribe batching, escrow, or clearing; those are scheme/provider choices</td>
+            <td>High as standard, medium as settlement primitive</td>
+          </tr>
+          <tr>
+            <td><a href="https://docs.stripe.com/payments/machine">Stripe Machine Payments / MPP</a></td>
+            <td>Private preview</td>
+            <td>Stripe, Base x402, Solana MPP, Tempo MPP, cards via SPT</td>
+            <td>Medium: agent HTTP payment acceptance and low-value charges</td>
+            <td>Merchant network, dashboards, fiat settlement, support for Solana and Tempo</td>
+            <td>Not a neutral Solana clearing program; stablecoin acceptance limited by Stripe availability</td>
+            <td>High for merchants</td>
+          </tr>
+          <tr>
+            <td><a href="https://solana.com/x402">Solana x402 ecosystem</a> / <a href="https://payai.network">PayAI</a></td>
+            <td>Live</td>
+            <td>Solana x402 facilitators and middleware</td>
+            <td>Medium: direct Solana exact payments and facilitation</td>
+            <td>Already where Solana x402 builders look; PayAI offers fast facilitator UX</td>
+            <td>Mostly per-payment/facilitator layer, not multilateral clearing</td>
+            <td>Medium-high</td>
+          </tr>
+          <tr>
+            <td><a href="https://arxiv.org/abs/2603.01179">A402 / Atomic Service Channels</a></td>
+            <td>Research</td>
+            <td>Bitcoin/Ethereum prototype, TEE-assisted adaptor signatures</td>
+            <td>Medium-high: service-bound payment channels and aggregation</td>
+            <td>Addresses atomic service execution and delivery, a known x402 gap</td>
+            <td>Research project, not a known production distribution channel</td>
+            <td>Medium</td>
+          </tr>
+          <tr>
+            <td>Traditional API keys and Stripe billing</td>
+            <td>Dominant substitute</td>
+            <td>Off-chain accounts, subscriptions, metered billing</td>
+            <td>Low technically, high commercially</td>
+            <td>Known, trusted, simple for humans and companies</td>
+            <td>Bad for autonomous agent discovery and tiny one-off purchases</td>
+            <td>High substitute threat</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>Agon's Plausible Moat</h2>
+      <div class="grid">
+        <section class="panel">
+          <strong>Technical wedge</strong>
+          <p>Solana-native cumulative channels, bundle settlement, and BLS-authenticated multilateral clearing. This is meaningfully different from per-request x402 exact settlement.</p>
+        </section>
+        <section class="panel">
+          <strong>Distribution wedge</strong>
+          <p>Weak today. Agon needs to become a settlement backend for existing x402/MPP facilitators, not ask developers to adopt a new envelope.</p>
+        </section>
+        <section class="panel">
+          <strong>Product wedge</strong>
+          <p>Agent task escrow plus high-frequency settlement accounting on Solana. Circle/OKX are strong at payments; Agon can focus on clearing, escrow, and verifiable agent commerce state.</p>
+        </section>
+      </div>
+
+      <h2>Recommendation</h2>
+      <p>Keep building only if the scope narrows. The high-probability path is: x402/MPP compatible gateway, Solana-native clearing as the backend, and escrow/reputation/accounting primitives for agent task commerce. Competing head-on with Circle Gateway Nanopayments or Stripe MPP as a generic payment product is not a good bet.</p>
+
+      <h2>Sources</h2>
+      <ul>
+        <li><a href="https://developers.circle.com/gateway/nanopayments">Circle Gateway Nanopayments</a></li>
+        <li><a href="https://developers.circle.com/gateway/nanopayments/concepts/batched-settlement">Circle Gateway batched settlement</a></li>
+        <li><a href="https://developers.circle.com/gateway/references/supported-blockchains">Circle Gateway supported blockchains</a></li>
+        <li><a href="https://web3.okx.com/de/onchainos/dev-docs/payments/methods-overview">OKX Onchain OS payment methods</a></li>
+        <li><a href="https://web3.okx.com/de/onchainos/dev-docs/payments/methods-batch">OKX batch payment</a></li>
+        <li><a href="https://github.com/coinbase/x402">Coinbase x402 GitHub</a></li>
+        <li><a href="https://docs.stripe.com/payments/machine">Stripe machine payments</a></li>
+        <li><a href="https://solana.com/x402">Solana x402 ecosystem</a></li>
+        <li><a href="https://arxiv.org/abs/2603.01179">A402 research paper</a></li>
+      </ul>
+    </main>
+  </body>
+</html>

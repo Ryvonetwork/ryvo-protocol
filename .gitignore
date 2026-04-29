@@ -17,3 +17,4 @@ config/
 # Keys (keep examples, ignore actual keys)
 keys/
 .env
+logs/

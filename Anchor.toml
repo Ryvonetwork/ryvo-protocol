@@ -18,7 +18,7 @@ agon_protocol = "3UyUFeNsUYPpM6hMRf7H8wg3MKEXQ82rqnsXhZrUwgSD"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "https://devnet.helius-rpc.com/?api-key=865bd8f8-6a09-4d2a-98fd-d2c24969e293"
+cluster = "https://api.devnet.solana.com"
 wallet = "/home/heis/agon/agon-protocol/keys/devnet-deployer.json"
 
 [scripts]
