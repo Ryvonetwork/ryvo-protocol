@@ -1,21 +1,34 @@
 import * as anchor from "@coral-xyz/anchor";
-import { Ed25519Program, PublicKey, SystemProgram } from "@solana/web3.js";
+import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
 
 import {
+  channelBucketIdForPair,
+  cooperativeUnlockChannelFundsForTest,
   createCommitmentMessage,
   createFundedTokenAccount,
   createTestParticipant,
+  depositParticipantBalance,
   ensureChannel,
+  executeChannelSignerUpdateForTest,
+  executeUnlockChannelFundsForTest,
   expectProgramError,
+  fetchParticipant,
+  findChannelPda,
+  findGlobalConfigPda,
+  findOwnerIndexBucketPda,
   findTokenRegistryPda,
-  findVaultTokenAccountPda,
   getTokenBalance,
   INBOUND_CHANNEL_POLICY,
+  lockChannelFundsForTest,
   nextCommitmentAmount,
   primaryMint,
   program,
+  refetchDirectionalChannel,
   registerTestToken,
+  requestChannelSignerUpdateForTest,
+  requestUnlockChannelFundsForTest,
+  settleIndividualForTest,
   sleep,
 } from "./shared/setup";
 
@@ -28,16 +41,13 @@ async function depositToParticipant(
   tokenId: number,
   amount: number
 ) {
-  await program.methods
-    .deposit(tokenId, new anchor.BN(amount))
-    .accounts({
-      owner: owner.publicKey,
-      participantAccount: participantPda,
-      ownerTokenAccount,
-      vaultTokenAccount: findVaultTokenAccountPda(tokenId),
-    } as any)
-    .signers([owner])
-    .rpc();
+  await depositParticipantBalance({
+    owner,
+    participantPda,
+    ownerTokenAccount,
+    tokenId,
+    amount,
+  });
 }
 
 describe("Permanent Channel Lifecycle", () => {
@@ -63,36 +73,30 @@ describe("Permanent Channel Lifecycle", () => {
 
   it("rejects self-channels for the same participant", async () => {
     const participant = await createTestParticipant();
-    const tokenIdBytes = Buffer.alloc(2);
-    tokenIdBytes.writeUInt16LE(1, 0);
-    const channelPda = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("channel-v2"),
-        new anchor.BN(participant.participant.participantId).toArrayLike(
-          Buffer,
-          "le",
-          4
-        ),
-        new anchor.BN(participant.participant.participantId).toArrayLike(
-          Buffer,
-          "le",
-          4
-        ),
-        tokenIdBytes,
-      ],
-      program.programId
-    )[0];
+    const channelPda = findChannelPda(
+      participant.participant.participantId,
+      participant.participant.participantId,
+      1
+    );
 
     await expectProgramError(
       () =>
         program.methods
-          .createChannel(1, null)
+          .createChannel(
+            1,
+            participant.participant.participantId,
+            participant.participant.participantId,
+            new anchor.BN(0),
+            null
+          )
           .accounts({
             tokenRegistry: findTokenRegistryPda(),
             owner: participant.wallet.publicKey,
-            payerAccount: participant.participantPda,
-            payeeAccount: participant.participantPda,
-            channelState: channelPda,
+            payerBucket: participant.participantPda,
+            payeeBucket: participant.participantPda,
+            ownerIndexBucket: findOwnerIndexBucketPda(participant.wallet.publicKey),
+            payeeOwner: null,
+            channelBucket: channelPda,
             systemProgram: SystemProgram.programId,
           } as any)
           .signers([participant.wallet])
@@ -114,19 +118,31 @@ describe("Permanent Channel Lifecycle", () => {
     await expectProgramError(
       () =>
         program.methods
-          .createChannel(1, null)
+          .createChannel(
+            1,
+            ensured.lowerParticipantId,
+            ensured.higherParticipantId,
+            new anchor.BN(
+              channelBucketIdForPair(
+                ensured.payerParticipant.participantId,
+                ensured.payeeParticipant.participantId
+              )
+            ),
+            null
+          )
           .accounts({
             tokenRegistry: findTokenRegistryPda(),
             owner: payer.wallet.publicKey,
-            payerAccount: ensured.payerParticipantPda,
-            payeeAccount: ensured.payeeParticipantPda,
+            payerBucket: ensured.payerParticipantPda,
+            payeeBucket: ensured.payeeParticipantPda,
+            ownerIndexBucket: findOwnerIndexBucketPda(payer.wallet.publicKey),
             payeeOwner: payee.wallet.publicKey,
-            channelState: ensured.channelPda,
+            channelBucket: ensured.channelPda,
             systemProgram: SystemProgram.programId,
           } as any)
           .signers([payer.wallet, payee.wallet])
           .rpc(),
-      "already in use"
+      "ChannelAlreadyExists"
     );
   });
 
@@ -161,42 +177,22 @@ describe("Permanent Channel Lifecycle", () => {
       primaryMint,
       2_000_000
     );
-    const { channelPda, payerParticipantPda, payeeParticipantPda } =
-      await ensureChannel(payer.wallet, payee.wallet.publicKey, 1, {
-        payeeOwnerSigner: payee.wallet,
-      });
+    const ensured = await ensureChannel(payer.wallet, payee.wallet.publicKey, 1, {
+      payeeOwnerSigner: payee.wallet,
+    });
 
     await depositToParticipant(
       payer.wallet,
-      payerParticipantPda,
+      ensured.payerParticipantPda,
       ownerTokenAccount,
       1,
       1_500_000
     );
 
-    await program.methods
-      .lockChannelFunds(1, new anchor.BN(200_000))
-      .accounts({
-        payerAccount: payerParticipantPda,
-        payeeAccount: payeeParticipantPda,
-        channelState: channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await lockChannelFundsForTest(ensured, 200_000, payer.wallet);
+    await lockChannelFundsForTest(ensured, 150_000, payer.wallet);
 
-    await program.methods
-      .lockChannelFunds(1, new anchor.BN(150_000))
-      .accounts({
-        payerAccount: payerParticipantPda,
-        payeeAccount: payeeParticipantPda,
-        channelState: channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
-
-    const channel = await program.account.channelState.fetch(channelPda);
+    const channel = await refetchDirectionalChannel(ensured);
     expect(channel.lockedBalance.toNumber()).to.equal(350_000);
   });
 
@@ -227,12 +223,18 @@ describe("Permanent Channel Lifecycle", () => {
     await expectProgramError(
       () =>
         program.methods
-          .lockChannelFunds(1, new anchor.BN(100_000))
+          .lockChannelFunds(
+            1,
+            secondChannel.payeeParticipant.participantId,
+            new anchor.BN(100_000)
+          )
           .accounts({
-            payerAccount: secondChannel.payerParticipantPda,
-            payeeAccount: secondChannel.payeeParticipantPda,
-            channelState: secondChannel.channelPda,
+            tokenRegistry: findTokenRegistryPda(),
+            payerBucket: secondChannel.payerParticipantPda,
+            channelBucket: secondChannel.channelPda,
+            ownerIndexBucket: findOwnerIndexBucketPda(payer.wallet.publicKey),
             owner: payer.wallet.publicKey,
+            systemProgram: SystemProgram.programId,
           } as any)
           .signers([payer.wallet])
           .rpc(),
@@ -260,34 +262,25 @@ describe("Permanent Channel Lifecycle", () => {
       1,
       1_000_000
     );
-    await program.methods
-      .lockChannelFunds(1, new anchor.BN(300_000))
-      .accounts({
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        channelState: ensured.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await lockChannelFundsForTest(ensured, 300_000, payer.wallet);
 
     await expectProgramError(
       () =>
         program.methods
-          .requestUnlockChannelFunds(1, new anchor.BN(100_000))
+          .requestUnlockChannelFunds(
+            1,
+            ensured.payeeParticipant.participantId,
+            new anchor.BN(100_000)
+          )
           .accounts({
-            globalConfig: PublicKey.findProgramAddressSync(
-              [Buffer.from("global-config")],
-              program.programId
-            )[0],
-            payerAccount: ensured.payerParticipantPda,
-            payeeAccount: ensured.payeeParticipantPda,
-            channelState: ensured.channelPda,
+            globalConfig: findGlobalConfigPda(),
+            channelBucket: ensured.channelPda,
+            ownerIndexBucket: findOwnerIndexBucketPda(outsider.wallet.publicKey),
             owner: outsider.wallet.publicKey,
           } as any)
           .signers([outsider.wallet])
           .rpc(),
-      "ConstraintSeeds"
+      "BucketAccountMismatch"
     );
   });
 
@@ -310,52 +303,15 @@ describe("Permanent Channel Lifecycle", () => {
       1,
       1_000_000
     );
-    await program.methods
-      .lockChannelFunds(1, new anchor.BN(400_000))
-      .accounts({
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        channelState: ensured.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await lockChannelFundsForTest(ensured, 400_000, payer.wallet);
+    await requestUnlockChannelFundsForTest(ensured, 100_000, payer.wallet);
 
-    const globalConfig = PublicKey.findProgramAddressSync(
-      [Buffer.from("global-config")],
-      program.programId
-    )[0];
-
-    await program.methods
-      .requestUnlockChannelFunds(1, new anchor.BN(100_000))
-      .accounts({
-        globalConfig,
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        channelState: ensured.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
-
-    const afterFirst = await program.account.channelState.fetch(ensured.channelPda);
+    const afterFirst = await refetchDirectionalChannel(ensured);
     await sleep(1200);
 
-    await program.methods
-      .requestUnlockChannelFunds(1, new anchor.BN(250_000))
-      .accounts({
-        globalConfig,
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        channelState: ensured.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await requestUnlockChannelFundsForTest(ensured, 250_000, payer.wallet);
 
-    const afterSecond = await program.account.channelState.fetch(
-      ensured.channelPda
-    );
+    const afterSecond = await refetchDirectionalChannel(ensured);
     expect(afterSecond.pendingUnlockAmount.toNumber()).to.equal(250_000);
     expect(afterSecond.unlockRequestedAt.toNumber()).to.be.greaterThan(
       afterFirst.unlockRequestedAt.toNumber()
@@ -373,10 +329,6 @@ describe("Permanent Channel Lifecycle", () => {
     const ensured = await ensureChannel(payer.wallet, payee.wallet.publicKey, 1, {
       payeeOwnerSigner: payee.wallet,
     });
-    const globalConfig = PublicKey.findProgramAddressSync(
-      [Buffer.from("global-config")],
-      program.programId
-    )[0];
 
     await depositToParticipant(
       payer.wallet,
@@ -385,38 +337,18 @@ describe("Permanent Channel Lifecycle", () => {
       1,
       1_500_000
     );
-    await program.methods
-      .lockChannelFunds(1, new anchor.BN(500_000))
-      .accounts({
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        channelState: ensured.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
-
-    await program.methods
-      .requestUnlockChannelFunds(1, new anchor.BN(200_000))
-      .accounts({
-        globalConfig,
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        channelState: ensured.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await lockChannelFundsForTest(ensured, 500_000, payer.wallet);
+    await requestUnlockChannelFundsForTest(ensured, 200_000, payer.wallet);
 
     await expectProgramError(
       () =>
         program.methods
-          .executeUnlockChannelFunds(1)
+          .executeUnlockChannelFunds(1, ensured.payeeParticipant.participantId)
           .accounts({
-            globalConfig,
-            payerAccount: ensured.payerParticipantPda,
-            payeeAccount: ensured.payeeParticipantPda,
-            channelState: ensured.channelPda,
+            globalConfig: findGlobalConfigPda(),
+            payerBucket: ensured.payerParticipantPda,
+            channelBucket: ensured.channelPda,
+            ownerIndexBucket: findOwnerIndexBucketPda(payer.wallet.publicKey),
             owner: payer.wallet.publicKey,
           } as any)
           .signers([payer.wallet])
@@ -424,30 +356,14 @@ describe("Permanent Channel Lifecycle", () => {
       "WithdrawalLocked"
     );
 
-    const payerBeforeUnlock = await program.account.participantAccount.fetch(
-      ensured.payerParticipantPda
-    );
+    const payerBeforeUnlock = await fetchParticipant(payer.wallet.publicKey);
 
     await sleep(2500);
 
-    await program.methods
-      .executeUnlockChannelFunds(1)
-      .accounts({
-        globalConfig,
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        channelState: ensured.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await executeUnlockChannelFundsForTest(ensured, payer.wallet);
 
-    const payerAfterUnlock = await program.account.participantAccount.fetch(
-      ensured.payerParticipantPda
-    );
-    const channelAfterUnlock = await program.account.channelState.fetch(
-      ensured.channelPda
-    );
+    const payerAfterUnlock = await fetchParticipant(payer.wallet.publicKey);
+    const channelAfterUnlock = await refetchDirectionalChannel(ensured);
 
     expect(
       getTokenBalance(payerAfterUnlock, 1).availableBalance.toNumber() -
@@ -456,6 +372,91 @@ describe("Permanent Channel Lifecycle", () => {
     expect(channelAfterUnlock.lockedBalance.toNumber()).to.equal(300_000);
     expect(channelAfterUnlock.pendingUnlockAmount.toNumber()).to.equal(0);
     expect(channelAfterUnlock.unlockRequestedAt.toNumber()).to.equal(0);
+  });
+
+  it("cooperative_unlock_channel_funds releases collateral immediately with payee consent", async () => {
+    const payer = await createTestParticipant();
+    const payee = await createTestParticipant();
+    const ownerTokenAccount = await createFundedTokenAccount(
+      payer.wallet,
+      primaryMint,
+      2_000_000
+    );
+    const ensured = await ensureChannel(payer.wallet, payee.wallet.publicKey, 1, {
+      payeeOwnerSigner: payee.wallet,
+    });
+
+    await depositToParticipant(
+      payer.wallet,
+      ensured.payerParticipantPda,
+      ownerTokenAccount,
+      1,
+      1_500_000
+    );
+    await lockChannelFundsForTest(ensured, 500_000, payer.wallet);
+
+    const payerBeforeUnlock = await fetchParticipant(payer.wallet.publicKey);
+    await cooperativeUnlockChannelFundsForTest(
+      ensured,
+      200_000,
+      payer.wallet,
+      payee.wallet
+    );
+
+    const payerAfterUnlock = await fetchParticipant(payer.wallet.publicKey);
+    const channelAfterUnlock = await refetchDirectionalChannel(ensured);
+    expect(
+      getTokenBalance(payerAfterUnlock, 1).availableBalance.toNumber() -
+        getTokenBalance(payerBeforeUnlock, 1).availableBalance.toNumber()
+    ).to.equal(200_000);
+    expect(channelAfterUnlock.lockedBalance.toNumber()).to.equal(300_000);
+    expect(channelAfterUnlock.pendingUnlockAmount.toNumber()).to.equal(0);
+    expect(channelAfterUnlock.unlockRequestedAt.toNumber()).to.equal(0);
+  });
+
+  it("cooperative_unlock_channel_funds requires the payee owner signer", async () => {
+    const payer = await createTestParticipant();
+    const payee = await createTestParticipant();
+    const outsider = await createTestParticipant();
+    const ownerTokenAccount = await createFundedTokenAccount(
+      payer.wallet,
+      primaryMint,
+      2_000_000
+    );
+    const ensured = await ensureChannel(payer.wallet, payee.wallet.publicKey, 1, {
+      payeeOwnerSigner: payee.wallet,
+    });
+
+    await depositToParticipant(
+      payer.wallet,
+      ensured.payerParticipantPda,
+      ownerTokenAccount,
+      1,
+      1_000_000
+    );
+    await lockChannelFundsForTest(ensured, 300_000, payer.wallet);
+
+    await expectProgramError(
+      () =>
+        (program.methods as any)
+          .cooperativeUnlockChannelFunds(
+            1,
+            ensured.payeeParticipant.participantId,
+            new anchor.BN(100_000)
+          )
+          .accounts({
+            tokenRegistry: findTokenRegistryPda(),
+            payerBucket: ensured.payerParticipantPda,
+            payeeBucket: ensured.payeeParticipantPda,
+            channelBucket: ensured.channelPda,
+            ownerIndexBucket: findOwnerIndexBucketPda(payer.wallet.publicKey),
+            owner: payer.wallet.publicKey,
+            payeeOwner: outsider.wallet.publicKey,
+          } as any)
+          .signers([payer.wallet, outsider.wallet])
+          .rpc(),
+      "CounterpartyConsentRequired"
+    );
   });
 
   it("fully drained pending unlock executes with zero release and clears pending state", async () => {
@@ -469,11 +470,6 @@ describe("Permanent Channel Lifecycle", () => {
     const ensured = await ensureChannel(payer.wallet, payee.wallet.publicKey, 1, {
       payeeOwnerSigner: payee.wallet,
     });
-    const globalConfig = PublicKey.findProgramAddressSync(
-      [Buffer.from("global-config")],
-      program.programId
-    )[0];
-
     await depositToParticipant(
       payer.wallet,
       ensured.payerParticipantPda,
@@ -481,28 +477,8 @@ describe("Permanent Channel Lifecycle", () => {
       1,
       2_000_000
     );
-    await program.methods
-      .lockChannelFunds(1, new anchor.BN(400_000))
-      .accounts({
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        channelState: ensured.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
-
-    await program.methods
-      .requestUnlockChannelFunds(1, new anchor.BN(250_000))
-      .accounts({
-        globalConfig,
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        channelState: ensured.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await lockChannelFundsForTest(ensured, 400_000, payer.wallet);
+    await requestUnlockChannelFundsForTest(ensured, 250_000, payer.wallet);
 
     const drainMessage = createCommitmentMessage({
       payerId: ensured.channel.payerId,
@@ -510,47 +486,21 @@ describe("Permanent Channel Lifecycle", () => {
       tokenId: 1,
       committedAmount: nextCommitmentAmount(ensured.channel, 400_000),
     });
-    const ed25519Ix = Ed25519Program.createInstructionWithPrivateKey({
-      privateKey: payer.wallet.secretKey,
+    const payerBeforeExecute = await fetchParticipant(payer.wallet.publicKey);
+
+    await settleIndividualForTest({
+      ensured,
       message: drainMessage,
+      signer: payer.wallet,
+      submitter: payee.wallet,
     });
-
-    const payerBeforeExecute = await program.account.participantAccount.fetch(
-      ensured.payerParticipantPda
-    );
-
-    await program.methods
-      .settleIndividual()
-      .accounts({
-        channelState: ensured.channelPda,
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        submitter: payee.wallet.publicKey,
-      } as any)
-      .preInstructions([ed25519Ix])
-      .signers([payee.wallet])
-      .rpc();
 
     await sleep(2500);
 
-    await program.methods
-      .executeUnlockChannelFunds(1)
-      .accounts({
-        globalConfig,
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        channelState: ensured.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await executeUnlockChannelFundsForTest(ensured, payer.wallet);
 
-    const payerAfterExecute = await program.account.participantAccount.fetch(
-      ensured.payerParticipantPda
-    );
-    const channelAfterExecute = await program.account.channelState.fetch(
-      ensured.channelPda
-    );
+    const payerAfterExecute = await fetchParticipant(payer.wallet.publicKey);
+    const channelAfterExecute = await refetchDirectionalChannel(ensured);
 
     expect(
       getTokenBalance(payerAfterExecute, 1).availableBalance.toNumber() -
@@ -575,10 +525,6 @@ describe("Permanent Channel Lifecycle", () => {
       authorizedSigner: oldSigner.publicKey,
       payeeOwnerSigner: payee.wallet,
     });
-    const globalConfig = PublicKey.findProgramAddressSync(
-      [Buffer.from("global-config")],
-      program.programId
-    )[0];
 
     await depositToParticipant(
       payer.wallet,
@@ -588,17 +534,11 @@ describe("Permanent Channel Lifecycle", () => {
       1_500_000
     );
 
-    await program.methods
-      .requestUpdateChannelAuthorizedSigner(1, newSigner.publicKey)
-      .accounts({
-        globalConfig,
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        channelState: ensured.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await requestChannelSignerUpdateForTest(
+      ensured,
+      newSigner.publicKey,
+      payer.wallet
+    );
 
     const prematureNewSignerMessage = createCommitmentMessage({
       payerId: ensured.channel.payerId,
@@ -609,38 +549,18 @@ describe("Permanent Channel Lifecycle", () => {
 
     await expectProgramError(
       () =>
-        program.methods
-          .settleIndividual()
-          .accounts({
-            channelState: ensured.channelPda,
-            payerAccount: ensured.payerParticipantPda,
-            payeeAccount: ensured.payeeParticipantPda,
-            submitter: payee.wallet.publicKey,
-          } as any)
-          .preInstructions([
-            Ed25519Program.createInstructionWithPrivateKey({
-              privateKey: newSigner.secretKey,
-              message: prematureNewSignerMessage,
-            }),
-          ])
-          .signers([payee.wallet])
-          .rpc(),
+        settleIndividualForTest({
+          ensured,
+          message: prematureNewSignerMessage,
+          signer: newSigner,
+          submitter: payee.wallet,
+        }),
       "InvalidSignature"
     );
 
     await expectProgramError(
       () =>
-        program.methods
-          .executeUpdateChannelAuthorizedSigner(1)
-          .accounts({
-            globalConfig,
-            payerAccount: ensured.payerParticipantPda,
-            payeeAccount: ensured.payeeParticipantPda,
-            channelState: ensured.channelPda,
-            owner: payer.wallet.publicKey,
-          } as any)
-          .signers([payer.wallet])
-          .rpc(),
+        executeChannelSignerUpdateForTest(ensured, payer.wallet),
       "WithdrawalLocked"
     );
 
@@ -651,40 +571,18 @@ describe("Permanent Channel Lifecycle", () => {
       committedAmount: nextCommitmentAmount(ensured.channel, 100_000),
     });
 
-    await program.methods
-      .settleIndividual()
-      .accounts({
-        channelState: ensured.channelPda,
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        submitter: payee.wallet.publicKey,
-      } as any)
-      .preInstructions([
-        Ed25519Program.createInstructionWithPrivateKey({
-          privateKey: oldSigner.secretKey,
-          message: oldSignerMessage,
-        }),
-      ])
-      .signers([payee.wallet])
-      .rpc();
+    await settleIndividualForTest({
+      ensured,
+      message: oldSignerMessage,
+      signer: oldSigner,
+      submitter: payee.wallet,
+    });
 
     await sleep(2500);
 
-    await program.methods
-      .executeUpdateChannelAuthorizedSigner(1)
-      .accounts({
-        globalConfig,
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        channelState: ensured.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await executeChannelSignerUpdateForTest(ensured, payer.wallet);
 
-    const rotatedChannel = await program.account.channelState.fetch(
-      ensured.channelPda
-    );
+    const rotatedChannel = await refetchDirectionalChannel(ensured);
     expect(rotatedChannel.authorizedSigner.toString()).to.equal(
       newSigner.publicKey.toString()
     );
@@ -696,51 +594,31 @@ describe("Permanent Channel Lifecycle", () => {
 
     await expectProgramError(
       () =>
-        program.methods
-          .settleIndividual()
-          .accounts({
-            channelState: ensured.channelPda,
-            payerAccount: ensured.payerParticipantPda,
-            payeeAccount: ensured.payeeParticipantPda,
-            submitter: payee.wallet.publicKey,
-          } as any)
-          .preInstructions([
-            Ed25519Program.createInstructionWithPrivateKey({
-              privateKey: oldSigner.secretKey,
-              message: createCommitmentMessage({
-                payerId: rotatedChannel.payerId,
-                payeeId: rotatedChannel.payeeId,
-                tokenId: 1,
-                committedAmount: postRotationAmount,
-              }),
-            }),
-          ])
-          .signers([payee.wallet])
-          .rpc(),
-      "InvalidSignature"
-    );
-
-    await program.methods
-      .settleIndividual()
-      .accounts({
-        channelState: ensured.channelPda,
-        payerAccount: ensured.payerParticipantPda,
-        payeeAccount: ensured.payeeParticipantPda,
-        submitter: payee.wallet.publicKey,
-      } as any)
-      .preInstructions([
-        Ed25519Program.createInstructionWithPrivateKey({
-          privateKey: newSigner.secretKey,
+        settleIndividualForTest({
+          ensured,
           message: createCommitmentMessage({
             payerId: rotatedChannel.payerId,
             payeeId: rotatedChannel.payeeId,
             tokenId: 1,
             committedAmount: postRotationAmount,
           }),
+          signer: oldSigner,
+          submitter: payee.wallet,
         }),
-      ])
-      .signers([payee.wallet])
-      .rpc();
+      "InvalidSignature"
+    );
+
+    await settleIndividualForTest({
+      ensured,
+      message: createCommitmentMessage({
+        payerId: rotatedChannel.payerId,
+        payeeId: rotatedChannel.payeeId,
+        tokenId: 1,
+        committedAmount: postRotationAmount,
+      }),
+      signer: newSigner,
+      submitter: payee.wallet,
+    });
   });
 
   it("respects inbound consent policies when creating permanent channels", async () => {
@@ -758,7 +636,8 @@ describe("Permanent Channel Lifecycle", () => {
     await program.methods
       .updateInboundChannelPolicy(INBOUND_CHANNEL_POLICY.Permissionless)
       .accounts({
-        participantAccount: payee.participantPda,
+        participantBucket: payee.participantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(payee.wallet.publicKey),
         owner: payee.wallet.publicKey,
       } as any)
       .signers([payee.wallet])
@@ -778,7 +657,8 @@ describe("Permanent Channel Lifecycle", () => {
     await program.methods
       .updateInboundChannelPolicy(INBOUND_CHANNEL_POLICY.Disabled)
       .accounts({
-        participantAccount: payee2.participantPda,
+        participantBucket: payee2.participantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(payee2.wallet.publicKey),
         owner: payee2.wallet.publicKey,
       } as any)
       .signers([payee2.wallet])

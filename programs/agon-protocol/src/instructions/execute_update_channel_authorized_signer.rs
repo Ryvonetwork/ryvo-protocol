@@ -2,34 +2,70 @@ use anchor_lang::prelude::*;
 
 use crate::errors::VaultError;
 use crate::events::ChannelAuthorizedSignerUpdated;
-use crate::state::{ChannelState, GlobalConfig, ParticipantAccount};
+use crate::state::{ChannelBucket, GlobalConfig, OwnerIndexBucket};
 
-pub fn handler(ctx: Context<ExecuteUpdateChannelAuthorizedSigner>, token_id: u16) -> Result<()> {
-    let channel = &mut ctx.accounts.channel_state;
-    require!(channel.token_id == token_id, VaultError::InvalidTokenMint);
+pub fn handler(
+    ctx: Context<ExecuteUpdateChannelAuthorizedSigner>,
+    token_id: u16,
+    payee_participant_id: u32,
+) -> Result<()> {
+    let owner = ctx.accounts.owner.key();
+    let payer_id = ctx
+        .accounts
+        .owner_index_bucket
+        .participant_id_for_verified_owner(
+            &ctx.accounts.owner_index_bucket.key(),
+            &owner,
+            ctx.program_id,
+        )?;
+    let (lower_id, higher_id, _) = ChannelBucket::canonicalize(payer_id, payee_participant_id)?;
+    ChannelBucket::verify_account_info(
+        &ctx.accounts.channel_bucket.to_account_info(),
+        token_id,
+        ChannelBucket::bucket_id_for_pair(lower_id, higher_id)?,
+        ctx.program_id,
+    )?;
+    let lane = {
+        let channel_bucket_info = ctx.accounts.channel_bucket.to_account_info();
+        let channel_bucket_data = channel_bucket_info.try_borrow_data()?;
+        ChannelBucket::read_resolved_lane_core_from_data(
+            channel_bucket_data.as_ref(),
+            payer_id,
+            payee_participant_id,
+        )?
+    };
+    require!(lane.initialized, VaultError::ChannelNotInitialized);
     require!(
-        channel.has_pending_authorized_signer_update(),
+        lane.has_pending_authorized_signer_update(),
         VaultError::NoAuthorizedSignerUpdatePending
     );
 
-    let activate_at = channel
+    let activate_at = lane
         .authorized_signer_update_requested_at
-        .checked_add(ctx.accounts.global_config.withdrawal_timelock_seconds)
+        .checked_add(
+            ctx.accounts
+                .global_config
+                .effective_channel_unlock_timelock_seconds()?,
+        )
         .ok_or(error!(VaultError::MathOverflow))?;
     require!(
         Clock::get()?.unix_timestamp >= activate_at,
         VaultError::WithdrawalLocked
     );
 
-    let previous_authorized_signer = channel.authorized_signer;
-    let new_authorized_signer = channel.pending_authorized_signer;
-    channel.authorized_signer = new_authorized_signer;
-    channel.pending_authorized_signer = Pubkey::default();
-    channel.authorized_signer_update_requested_at = 0;
+    let (previous_authorized_signer, new_authorized_signer) = {
+        let channel_bucket_info = ctx.accounts.channel_bucket.to_account_info();
+        let mut channel_bucket_data = channel_bucket_info.try_borrow_mut_data()?;
+        ChannelBucket::execute_authorized_signer_update_in_data(
+            channel_bucket_data.as_mut(),
+            payer_id,
+            payee_participant_id,
+        )?
+    };
 
     emit!(ChannelAuthorizedSignerUpdated {
-        payer_id: ctx.accounts.payer_account.participant_id,
-        payee_id: ctx.accounts.payee_account.participant_id,
+        payer_id,
+        payee_id: payee_participant_id,
         token_id,
         previous_authorized_signer,
         new_authorized_signer,
@@ -46,30 +82,11 @@ pub struct ExecuteUpdateChannelAuthorizedSigner<'info> {
     )]
     pub global_config: Account<'info, GlobalConfig>,
 
-    #[account(
-        seeds = [ParticipantAccount::SEED_PREFIX, owner.key().as_ref()],
-        bump,
-        has_one = owner,
-    )]
-    pub payer_account: Account<'info, ParticipantAccount>,
+    /// CHECK: Verified with ChannelBucket::verify_account_info before raw lane mutation.
+    #[account(mut)]
+    pub channel_bucket: UncheckedAccount<'info>,
 
-    #[account(
-        seeds = [ParticipantAccount::SEED_PREFIX, payee_account.owner.as_ref()],
-        bump,
-    )]
-    pub payee_account: Account<'info, ParticipantAccount>,
-
-    #[account(
-        mut,
-        seeds = [
-            ChannelState::SEED_PREFIX,
-            payer_account.participant_id.to_le_bytes().as_ref(),
-            payee_account.participant_id.to_le_bytes().as_ref(),
-            channel_state.token_id.to_le_bytes().as_ref(),
-        ],
-        bump,
-    )]
-    pub channel_state: Account<'info, ChannelState>,
+    pub owner_index_bucket: Account<'info, OwnerIndexBucket>,
 
     pub owner: Signer<'info>,
 }

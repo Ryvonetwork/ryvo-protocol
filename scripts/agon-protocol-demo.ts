@@ -5,11 +5,13 @@ import { Program } from "@coral-xyz/anchor";
 import {
   AddressLookupTableAccount,
   AddressLookupTableProgram,
+  ComputeBudgetProgram,
   Connection,
   Ed25519Program,
   Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
+  SendTransactionError,
   SYSVAR_INSTRUCTIONS_PUBKEY,
   SystemProgram,
   Transaction,
@@ -24,14 +26,36 @@ import {
   getOrCreateAssociatedTokenAccount,
   transfer,
 } from "@solana/spl-token";
-import {
-  createHash,
-  createPrivateKey,
-  sign as cryptoSign,
-} from "crypto";
+import { createHash, createPrivateKey, sign as cryptoSign } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { AgonProtocol } from "../target/types/agon_protocol";
+
+const { loadProjectRpcEnv, resolveProjectRpcUrl } =
+  require("./lib/rpc-env.cjs") as {
+    loadProjectRpcEnv: (repoRoot?: string) => void;
+    resolveProjectRpcUrl: (network?: string) => string;
+  };
+
+loadProjectRpcEnv(process.cwd());
+
+import {
+  BLS_CLEARING_ROUND_MESSAGE_VERSION,
+  BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+  BLS_REGISTRATION_MESSAGE_VERSION,
+  BLS_REGISTRATION_MESSAGE_KIND,
+  BLS_SIGNATURE_COMPRESSED_SIZE,
+  aggregateBlsSignatures,
+  createBlsKeypairFromSeed,
+  createBlsRegistrationMessage,
+  signBlsMessage as signSharedBlsMessage,
+} from "../shared/protocol-bls";
+import {
+  getCanonicalChannelParticipants,
+  normalizeChannelBucketState as normalizeSharedChannelBucketState,
+  normalizeDirectionalChannelState,
+  normalizeParticipantBucketSlot,
+} from "../shared/channel-bucket-state";
 import {
   type BenchmarkShape,
   type DemoBenchmarkScenario,
@@ -47,18 +71,66 @@ import {
 
 const TOKEN_REGISTRY_SEED = "token-registry";
 const GLOBAL_CONFIG_SEED = "global-config";
-const PARTICIPANT_SEED = "participant";
-const CHANNEL_SEED = "channel-v2";
+const PARTICIPANT_BUCKET_SEED = "participant-bucket-v2";
+const OWNER_INDEX_BUCKET_SEED = "owner-index-bucket-v2";
+const CHANNEL_BUCKET_SEED = "channel-bucket-v2";
+const PARTICIPANT_BUCKET_SLOT_COUNT = 9;
+const CHANNEL_BUCKET_SLOT_COUNT = 46;
+const CHANNEL_BUCKET_DISCRIMINATOR = Buffer.from([
+  171, 219, 130, 228, 148, 242, 103, 148,
+]);
+const CHANNEL_BUCKET_TOKEN_ID_OFFSET = 8;
+const CHANNEL_BUCKET_ID_OFFSET = 10;
+const CHANNEL_BUCKET_SLOTS_OFFSET = 19;
+const CHANNEL_BUCKET_SLOT_SIZE = 219;
+const CHANNEL_BUCKET_SPACE =
+  CHANNEL_BUCKET_SLOTS_OFFSET +
+  CHANNEL_BUCKET_SLOT_COUNT * CHANNEL_BUCKET_SLOT_SIZE;
+const CHANNEL_BUCKET_SLOT_INITIALIZED_OFFSET = 0;
+const CHANNEL_BUCKET_SLOT_LOWER_PARTICIPANT_ID_OFFSET = 1;
+const CHANNEL_BUCKET_SLOT_HIGHER_PARTICIPANT_ID_OFFSET = 5;
+const CHANNEL_BUCKET_LOWER_TO_HIGHER_LANE_OFFSET = 9;
+const CHANNEL_BUCKET_HIGHER_TO_LOWER_LANE_OFFSET = 114;
+const CHANNEL_BUCKET_LANE_INITIALIZED_OFFSET = 0;
+const CHANNEL_BUCKET_LANE_SETTLED_CUMULATIVE_OFFSET = 1;
+const CHANNEL_BUCKET_LANE_LOCKED_BALANCE_OFFSET = 9;
+const OWNER_INDEX_BUCKET_COUNT = 1024;
 const VAULT_TOKEN_ACCOUNT_SEED = "vault-token-account";
 const USED_SIGNATURE_SEED = "used-sig";
 const MULTILATERAL_NAMESPACE = "mnet";
 const DEFAULT_USDC_MINT = "Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr";
 const DEFAULT_TOKEN_ID = 1;
 const DEFAULT_TOKEN_SYMBOL = "USDC";
-const DEFAULT_WALLET_COUNT = 6;
-const MAX_WALLET_COUNT = 10;
+const DEFAULT_WALLET_MANIFEST_PATH = path.join(
+  "config",
+  "agon-protocol-demo-wallets.json"
+);
+const DEMO_WALLET_BASE_NAMES = [
+  "Alice",
+  "Bob",
+  "Carol",
+  "Dave",
+  "Erin",
+  "Frank",
+  "Grace",
+  "Heidi",
+  "Ivan",
+  "Judy",
+];
+const DEFAULT_BLS_SEARCH_RESULTS_LOG_PATH = path.join(
+  "logs",
+  "bls-search-results.jsonl"
+);
+const MIN_WALLET_COUNT = 6;
+const DEFAULT_WALLET_COUNT = 32;
+const MAX_WALLET_COUNT = 32;
 const DEFAULT_SOL_PER_WALLET = 0.1;
 const DEFAULT_USDC_PER_WALLET = 1000;
+const DEFAULT_BLS_INTERNAL_BALANCE_TARGET = 100;
+const DEFAULT_BLS_RANDOM_MIN_AMOUNT = 0.5;
+const DEFAULT_BLS_RANDOM_MAX_AMOUNT = 2;
+const DEFAULT_BLS_RANDOM_SEED = "agon-bls-search-v1";
+const DEFAULT_BLS_MAX_DENSE_CHANNELS = 150;
 const DEFAULT_DEPOSIT_PLAN: Record<string, number> = {
   Alice: 350,
   Bob: 120,
@@ -84,8 +156,10 @@ const DEFAULT_BILATERAL_REVERSE_COMMITMENT_COUNT = 200;
 const DEFAULT_BILATERAL_AMOUNT_PER_COMMITMENT = 0.1;
 const DEFAULT_MULTILATERAL_EDGE_COMMITMENT_COUNT = 220;
 const DEFAULT_MULTILATERAL_AMOUNT_PER_COMMITMENT = 0.1;
-const X402_SOLANA_COST_PER_TX_USD = 0.0008;
+const X402_SOLANA_COST_PER_TX_USD = 0.00044;
+const DEFAULT_BLS_COMPUTE_UNIT_LIMIT = 1_400_000;
 const SIGNED_COMMITMENT_PREVIEW_COUNT = 4;
+const BLS_DEMO_KEY_DERIVATION_TAG = Buffer.from("agon-demo-bls-key-v1", "utf8");
 const PKCS8_ED25519_PREFIX = Buffer.from(
   "302e020100300506032b657004220420",
   "hex"
@@ -102,10 +176,19 @@ type CliOptions = {
   tokenSymbol: string;
   solPerWallet: number;
   tokensPerWallet: number;
+  walletManifestPath: string;
+  blsSearchResultsLogPath: string;
+  blsInternalBalanceTarget: number;
+  blsRandomSeed: string;
+  blsRandomMinAmount: number;
+  blsRandomMaxAmount: number;
+  blsMaxDenseChannels: number;
+  blsComputeUnitLimit: number;
   reuseManifestPath: string | null;
   skipFunding: boolean;
   skipParticipantInit: boolean;
   skipDeposits: boolean;
+  skipMaxChannels: boolean;
   depositPlan: Record<string, number>;
   singleCommitmentCount: number;
   singleCommitmentAmount: number;
@@ -132,6 +215,8 @@ type DemoWallet = {
   participantPda: PublicKey;
   participantId: number;
   tokenAccount: PublicKey;
+  blsSecretScalar: bigint;
+  blsPublicKeyCompressed: Buffer;
 };
 
 type TokenBalanceView = {
@@ -232,9 +317,8 @@ type ClearingRoundPayloadPreview = {
 type ScenarioSignatureMap = {
   singleCommitment: string;
   batchCommitment: string;
-  unilateralClearing: string;
-  bilateralClearing: string;
-  multilateralClearing: string;
+  blsMaxParticipantsClearing: string;
+  blsMaxChannelsClearing?: string;
 };
 
 type ScenarioResult = {
@@ -276,6 +360,128 @@ type DemoRunManifest = {
   feeRecipient: string;
   wallets: DemoManifestWallet[];
   messageDomain?: string;
+};
+
+type PreparedWalletSet = {
+  runId: string;
+  walletDir: string;
+  wallets: DemoWallet[];
+  source: "created" | "manifest";
+  manifestPath?: string;
+};
+
+type MultilateralChannelEdge = {
+  payer: DemoWallet;
+  payee: DemoWallet;
+  channelPda: PublicKey;
+  channel: any;
+};
+
+type MultilateralEdgeSelection = {
+  edges: MultilateralChannelEdge[];
+  participants: DemoWallet[];
+};
+
+type MultilateralCandidate = {
+  participantCount: number;
+  channelCount: number;
+};
+
+type MultilateralScenarioMode = "max-participants" | "max-channels";
+
+type MultilateralScenarioDefinition = {
+  scenarioId: string;
+  scenarioTitle: string;
+  mode: MultilateralScenarioMode;
+  fullParticipantSet: DemoWallet[];
+  lowerBound: number;
+  upperBound: number;
+};
+
+type MultilateralSearchAttempt = {
+  candidate: MultilateralCandidate;
+  txBytes: number;
+  fitsPacket: boolean;
+  simulationPassed: boolean;
+  simulationError: string | null;
+  messageBytes: number;
+  aggregateSignatureBytes: number;
+};
+
+type MultilateralPreparedRound = {
+  participants: DemoWallet[];
+  edges: MultilateralChannelEdge[];
+  roundBlocks: ClearingRoundPreviewBlockInput[];
+  message: Buffer;
+  aggregateSignatureCompressed: Buffer;
+  instruction: TransactionInstruction;
+  clearingRoundPreview: ClearingRoundPayloadPreview;
+  signedCommitmentPreview: SignedCommitmentPreview;
+  totalGrossRouted: number;
+  totalUnderlyingCommitments: number;
+};
+
+type RpcParticipantVerification = {
+  name: string;
+  participantPda: PublicKey;
+  beforeAvailable: bigint;
+  afterAnchorAvailable: bigint;
+  afterRpcAvailable: bigint;
+  beforeWithdrawing: bigint;
+  afterAnchorWithdrawing: bigint;
+  afterRpcWithdrawing: bigint;
+  matchesAnchor: boolean;
+};
+
+type RpcChannelVerification = {
+  channelLabel: string;
+  channelPda: PublicKey;
+  beforeSettledCumulative: bigint;
+  afterAnchorSettledCumulative: bigint;
+  afterRpcSettledCumulative: bigint;
+  matchesAnchor: boolean;
+};
+
+type RpcSettlementVerification = {
+  participantChecks: RpcParticipantVerification[];
+  channelChecks: RpcChannelVerification[];
+};
+
+type MultilateralSearchContext = {
+  fullParticipants: DemoWallet[];
+  completeGraphEdges: MultilateralChannelEdge[];
+  lookupTables: AddressLookupTableAccount[];
+  sponsor: Keypair;
+  extraSigners: Keypair[];
+  decimals: number;
+  tokenId: number;
+  tokenSymbol: string;
+  messageDomain: Buffer;
+  edgeCommitmentCount: number;
+  resultsLogPath: string;
+  runId: string;
+  scenarioSeed: string;
+  randomMinAmount: number;
+  randomMaxAmount: number;
+  denseChannelCap: number;
+  computeUnitLimit: number;
+};
+
+type MultilateralCandidateEvaluation = {
+  definition: MultilateralScenarioDefinition;
+  attempt: MultilateralSearchAttempt;
+  preparedRound: MultilateralPreparedRound;
+  successfulCandidates: EvaluatedMultilateralCandidate[];
+};
+
+type EvaluatedMultilateralCandidate = {
+  attempt: MultilateralSearchAttempt;
+  preparedRound: MultilateralPreparedRound;
+};
+
+type MultilateralSearchResult = {
+  best: EvaluatedMultilateralCandidate;
+  successfulCandidates: EvaluatedMultilateralCandidate[];
 };
 
 function loadConfigFile(
@@ -437,7 +643,7 @@ function parseArgs(argv: string[]): CliOptions {
   }
   if (args.has("help")) {
     console.log(
-      "Usage: npx ts-node scripts/agon-protocol-demo.ts [--config-file config/agon-protocol-demo.env] [--wallet-count 6] [--token-id 1] [--mint <pubkey>] [--symbol USDC] [--reuse-manifest config/agon-protocol-demo-last-run.json]"
+      "Usage: npx ts-node scripts/agon-protocol-demo.ts [--config-file config/agon-protocol-demo.env] [--wallet-count 6] [--token-id 1] [--mint <pubkey>] [--symbol USDC] [--wallet-manifest config/agon-protocol-demo-wallets.json] [--reuse-manifest config/agon-protocol-demo-last-run.json]"
     );
     process.exit(0);
   }
@@ -452,12 +658,10 @@ function parseArgs(argv: string[]): CliOptions {
     getValue("wallet-count", "AGON_DEMO_WALLET_COUNT"),
     DEFAULT_WALLET_COUNT,
     "wallet-count",
-    DEFAULT_WALLET_COUNT
+    MIN_WALLET_COUNT
   );
-  if (!Number.isInteger(walletCount) || walletCount < DEFAULT_WALLET_COUNT) {
-    throw new Error(
-      `wallet-count must be an integer >= ${DEFAULT_WALLET_COUNT}`
-    );
+  if (!Number.isInteger(walletCount) || walletCount < MIN_WALLET_COUNT) {
+    throw new Error(`wallet-count must be an integer >= ${MIN_WALLET_COUNT}`);
   }
   if (walletCount > MAX_WALLET_COUNT) {
     throw new Error(`wallet-count must be <= ${MAX_WALLET_COUNT}`);
@@ -480,6 +684,48 @@ function parseArgs(argv: string[]): CliOptions {
     DEFAULT_USDC_PER_WALLET,
     "tokens-per-wallet"
   );
+  const walletManifestPath =
+    getValue("wallet-manifest", "AGON_DEMO_WALLET_MANIFEST") ??
+    DEFAULT_WALLET_MANIFEST_PATH;
+  const blsSearchResultsLogPath =
+    getValue("bls-search-log", "AGON_DEMO_BLS_SEARCH_LOG") ??
+    DEFAULT_BLS_SEARCH_RESULTS_LOG_PATH;
+  const blsInternalBalanceTarget = parseFloatOption(
+    getValue(
+      "bls-internal-balance-target",
+      "AGON_DEMO_BLS_INTERNAL_BALANCE_TARGET"
+    ),
+    DEFAULT_BLS_INTERNAL_BALANCE_TARGET,
+    "AGON_DEMO_BLS_INTERNAL_BALANCE_TARGET",
+    0
+  );
+  const blsRandomSeed =
+    getValue("bls-random-seed", "AGON_DEMO_BLS_RANDOM_SEED") ??
+    DEFAULT_BLS_RANDOM_SEED;
+  const blsRandomMinAmount = parseFloatOption(
+    getValue("bls-random-min-amount", "AGON_DEMO_BLS_RANDOM_MIN_AMOUNT"),
+    DEFAULT_BLS_RANDOM_MIN_AMOUNT,
+    "AGON_DEMO_BLS_RANDOM_MIN_AMOUNT",
+    0
+  );
+  const blsRandomMaxAmount = parseFloatOption(
+    getValue("bls-random-max-amount", "AGON_DEMO_BLS_RANDOM_MAX_AMOUNT"),
+    DEFAULT_BLS_RANDOM_MAX_AMOUNT,
+    "AGON_DEMO_BLS_RANDOM_MAX_AMOUNT",
+    blsRandomMinAmount
+  );
+  const blsMaxDenseChannels = parseIntegerOption(
+    getValue("bls-max-dense-channels", "AGON_DEMO_BLS_MAX_DENSE_CHANNELS"),
+    DEFAULT_BLS_MAX_DENSE_CHANNELS,
+    "AGON_DEMO_BLS_MAX_DENSE_CHANNELS",
+    1
+  );
+  const blsComputeUnitLimit = parseIntegerOption(
+    getValue("bls-compute-unit-limit", "AGON_DEMO_BLS_COMPUTE_UNIT_LIMIT"),
+    DEFAULT_BLS_COMPUTE_UNIT_LIMIT,
+    "AGON_DEMO_BLS_COMPUTE_UNIT_LIMIT",
+    200_000
+  );
   const reuseManifestPath =
     getValue("reuse-manifest", "AGON_DEMO_REUSE_MANIFEST") ?? null;
   const skipFunding = parseBooleanOption(
@@ -494,6 +740,10 @@ function parseArgs(argv: string[]): CliOptions {
     getValue("skip-deposits", "AGON_DEMO_SKIP_DEPOSITS"),
     false
   );
+  const skipMaxChannels = parseBooleanOption(
+    getValue("skip-max-channels", "AGON_DEMO_SKIP_MAX_CHANNELS"),
+    false
+  );
   return {
     configFilePath,
     walletCount,
@@ -505,10 +755,19 @@ function parseArgs(argv: string[]): CliOptions {
     tokenSymbol,
     solPerWallet,
     tokensPerWallet,
+    walletManifestPath,
+    blsSearchResultsLogPath,
+    blsInternalBalanceTarget,
+    blsRandomSeed,
+    blsRandomMinAmount,
+    blsRandomMaxAmount,
+    blsMaxDenseChannels,
+    blsComputeUnitLimit,
     reuseManifestPath,
     skipFunding,
     skipParticipantInit,
     skipDeposits,
+    skipMaxChannels,
     depositPlan: parseDepositPlan(
       getValue("deposit-plan-json", "AGON_DEMO_DEPOSIT_PLAN_JSON")
     ),
@@ -665,11 +924,80 @@ function findGlobalConfigPda(programId: PublicKey): PublicKey {
   )[0];
 }
 
-function findParticipantPda(programId: PublicKey, owner: PublicKey): PublicKey {
+function u32Le(value: number): Buffer {
+  return new anchor.BN(value).toArrayLike(Buffer, "le", 4);
+}
+
+function u64Le(value: number | bigint): Buffer {
+  return new anchor.BN(value.toString()).toArrayLike(Buffer, "le", 8);
+}
+
+function participantBucketIdForParticipantId(participantId: number): number {
+  return Math.floor(participantId / PARTICIPANT_BUCKET_SLOT_COUNT);
+}
+
+function participantBucketSlotIndex(participantId: number): number {
+  return participantId % PARTICIPANT_BUCKET_SLOT_COUNT;
+}
+
+function ownerIndexBucketIdForOwner(owner: PublicKey): number {
+  const digest = createHash("sha256").update(owner.toBuffer()).digest();
+  return digest.readUInt32LE(0) % OWNER_INDEX_BUCKET_COUNT;
+}
+
+function findParticipantBucketPda(
+  programId: PublicKey,
+  participantId: number
+): PublicKey {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from(PARTICIPANT_SEED), owner.toBytes()],
+    [
+      Buffer.from(PARTICIPANT_BUCKET_SEED),
+      u32Le(participantBucketIdForParticipantId(participantId)),
+    ],
     programId
   )[0];
+}
+
+function findOwnerIndexBucketPda(
+  programId: PublicKey,
+  owner: PublicKey
+): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [
+      Buffer.from(OWNER_INDEX_BUCKET_SEED),
+      u32Le(ownerIndexBucketIdForOwner(owner)),
+    ],
+    programId
+  )[0];
+}
+
+function pairOrdinal(
+  lowerParticipantId: number,
+  higherParticipantId: number
+): bigint {
+  const higher = BigInt(higherParticipantId);
+  return (higher * (higher - 1n)) / 2n + BigInt(lowerParticipantId);
+}
+
+function channelBucketIdForPair(payerId: number, payeeId: number): number {
+  const { lowerParticipantId, higherParticipantId } =
+    getCanonicalChannelParticipants(payerId, payeeId);
+  return Number(
+    pairOrdinal(lowerParticipantId, higherParticipantId) /
+      BigInt(CHANNEL_BUCKET_SLOT_COUNT)
+  );
+}
+
+function channelBucketSlotIndexForPair(
+  payerId: number,
+  payeeId: number
+): number {
+  const { lowerParticipantId, higherParticipantId } =
+    getCanonicalChannelParticipants(payerId, payeeId);
+  return Number(
+    pairOrdinal(lowerParticipantId, higherParticipantId) %
+      BigInt(CHANNEL_BUCKET_SLOT_COUNT)
+  );
 }
 
 function findChannelPda(
@@ -680,13 +1008,63 @@ function findChannelPda(
 ): PublicKey {
   return PublicKey.findProgramAddressSync(
     [
-      Buffer.from(CHANNEL_SEED),
-      new anchor.BN(payerId).toArrayLike(Buffer, "le", 4),
-      new anchor.BN(payeeId).toArrayLike(Buffer, "le", 4),
+      Buffer.from(CHANNEL_BUCKET_SEED),
       new anchor.BN(tokenId).toArrayLike(Buffer, "le", 2),
+      u64Le(channelBucketIdForPair(payerId, payeeId)),
     ],
     programId
   )[0];
+}
+
+function normalizeChannelBucketState(
+  channelBucket: any,
+  payerId: number,
+  payeeId: number
+) {
+  return normalizeSharedChannelBucketState(
+    channelBucket,
+    payerId,
+    payeeId,
+    channelBucketSlotIndexForPair
+  );
+}
+
+async function fetchDirectionalChannelState(
+  program: Program<AgonProtocol>,
+  channelPda: PublicKey,
+  payerId: number,
+  payeeId: number
+) {
+  const pairChannel = await fetchRawChannelBucketState(
+    program,
+    channelPda,
+    payerId,
+    payeeId
+  );
+  return normalizeDirectionalChannelState(pairChannel, payerId, payeeId);
+}
+
+function deriveWalletBlsKeypair(wallet: Keypair): {
+  secretScalar: bigint;
+  publicKeyCompressed: Buffer;
+} {
+  const keypair = createBlsKeypairFromSeed(
+    Buffer.concat([BLS_DEMO_KEY_DERIVATION_TAG, Buffer.from(wallet.secretKey)])
+  );
+  return {
+    secretScalar: keypair.secretScalar,
+    publicKeyCompressed: keypair.publicKeyCompressed,
+  };
+}
+
+function signBlsMessage(
+  wallet: Pick<DemoWallet, "blsSecretScalar">,
+  message: Buffer | Uint8Array
+): Buffer {
+  return signSharedBlsMessage(
+    { secretScalar: wallet.blsSecretScalar },
+    message
+  );
 }
 
 function findVaultTokenAccountPda(
@@ -736,7 +1114,11 @@ function signEd25519Message(message: Buffer, signer: Keypair): Buffer {
 function buildOrderedParticipantPairs<T>(participants: T[]): Array<[T, T]> {
   const pairs: Array<[T, T]> = [];
   for (let offset = 1; offset < participants.length; offset += 1) {
-    for (let payerIndex = 0; payerIndex < participants.length; payerIndex += 1) {
+    for (
+      let payerIndex = 0;
+      payerIndex < participants.length;
+      payerIndex += 1
+    ) {
       pairs.push([
         participants[payerIndex],
         participants[(payerIndex + offset) % participants.length],
@@ -744,6 +1126,112 @@ function buildOrderedParticipantPairs<T>(participants: T[]): Array<[T, T]> {
     }
   }
   return pairs;
+}
+
+function buildBoundedDenseGraphPairs<T>(
+  participants: T[],
+  maxDirectedChannels: number
+): Array<[T, T]> {
+  const cappedMaxChannels = Math.min(
+    maxDirectedChannels,
+    participants.length * Math.max(0, participants.length - 1)
+  );
+  const selectedPairs: Array<[T, T]> = [];
+  const seenPairKeys = new Set<string>();
+  const appendPair = (payerIndex: number, payeeIndex: number): void => {
+    if (
+      payerIndex < 0 ||
+      payeeIndex < 0 ||
+      payerIndex >= participants.length ||
+      payeeIndex >= participants.length ||
+      payerIndex === payeeIndex
+    ) {
+      return;
+    }
+    const pairKey = `${payerIndex}->${payeeIndex}`;
+    if (
+      seenPairKeys.has(pairKey) ||
+      selectedPairs.length >= cappedMaxChannels
+    ) {
+      return;
+    }
+    seenPairKeys.add(pairKey);
+    selectedPairs.push([participants[payerIndex], participants[payeeIndex]]);
+  };
+
+  if (participants.length === 2) {
+    appendPair(0, 1);
+    appendPair(1, 0);
+  } else if (participants.length >= 3) {
+    appendPair(0, 1);
+    appendPair(1, 2);
+    appendPair(2, 0);
+    for (
+      let participantCount = 4;
+      participantCount <= participants.length;
+      participantCount += 1
+    ) {
+      appendPair(participantCount - 2, participantCount - 1);
+      appendPair(participantCount - 1, 0);
+    }
+  }
+
+  for (const [payer, payee] of buildOrderedParticipantPairs(participants)) {
+    const payerIndex = participants.indexOf(payer);
+    const payeeIndex = participants.indexOf(payee);
+    appendPair(payerIndex, payeeIndex);
+    if (selectedPairs.length >= cappedMaxChannels) {
+      break;
+    }
+  }
+
+  return selectedPairs;
+}
+
+function multilateralEdgeKey(
+  payerParticipantId: number,
+  payeeParticipantId: number
+): string {
+  return `${payerParticipantId}->${payeeParticipantId}`;
+}
+
+function deterministicRawChannelAmount(params: {
+  seed: string;
+  scenarioId: string;
+  payer: DemoWallet;
+  payee: DemoWallet;
+  decimals: number;
+  minAmount: number;
+  maxAmount: number;
+}): number {
+  const minRaw = toRawAmount(params.minAmount, params.decimals);
+  const maxRaw = toRawAmount(params.maxAmount, params.decimals);
+  if (maxRaw <= minRaw) {
+    return minRaw;
+  }
+
+  const digest = createHash("sha256")
+    .update(params.seed)
+    .update(":")
+    .update(params.scenarioId)
+    .update(":")
+    .update(String(params.payer.participantId))
+    .update("->")
+    .update(String(params.payee.participantId))
+    .digest();
+  const span = BigInt(maxRaw - minRaw + 1);
+  const offset = Number(
+    BigInt(`0x${digest.subarray(0, 8).toString("hex")}`) % span
+  );
+  return minRaw + offset;
+}
+
+async function appendBlsSearchResult(
+  outputPath: string,
+  content: Record<string, unknown>
+): Promise<void> {
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.appendFileSync(outputPath, `${JSON.stringify(content)}\n`, "utf8");
 }
 
 function createBatchEd25519Instruction(
@@ -906,6 +1394,7 @@ function createClearingRoundMessage(params: {
   tokenId: number;
   messageDomain: Buffer | Uint8Array;
   blocks: ParticipantBlockSpec[];
+  version?: number;
 }): Buffer {
   const dynamicParts: number[] = [];
   for (const block of params.blocks) {
@@ -918,7 +1407,7 @@ function createClearingRoundMessage(params: {
   }
 
   return Buffer.concat([
-    Buffer.from([0x02, 0x04]),
+    Buffer.from([0x02, params.version ?? 0x04]),
     Buffer.from(params.messageDomain),
     new anchor.BN(params.tokenId).toArrayLike(Buffer, "le", 2),
     Buffer.from([params.blocks.length & 0xff]),
@@ -1074,10 +1563,13 @@ function buildClearingRoundPayloadPreview(params: {
   tokenSymbol: string;
   decimals: number;
   blocks: ClearingRoundPreviewBlockInput[];
+  version?: number;
+  aggregateSignature?: Buffer | Uint8Array;
 }): ClearingRoundPayloadPreview {
   const message = createClearingRoundMessage({
     tokenId: params.tokenId,
     messageDomain: params.messageDomain,
+    version: params.version,
     blocks: params.blocks.map((block) => ({
       participantId: block.participant.participantId,
       entries: block.entries.map((entry) => ({
@@ -1089,7 +1581,7 @@ function buildClearingRoundPayloadPreview(params: {
 
   return {
     kind: 0x02,
-    version: 0x04,
+    version: params.version ?? 0x04,
     messageDomain: trimHex(params.messageDomain.toString("hex")),
     tokenId: params.tokenId,
     token: params.tokenSymbol,
@@ -1112,13 +1604,16 @@ function buildClearingRoundPayloadPreview(params: {
         )} ${params.tokenSymbol}`,
       })),
     })),
-    signatures: params.blocks.map((block) =>
-      trimHex(
-        `0x${signEd25519Message(message, block.participant.keypair).toString(
-          "hex"
-        )}`
-      )
-    ),
+    signatures: params.aggregateSignature
+      ? [trimHex(`0x${Buffer.from(params.aggregateSignature).toString("hex")}`)]
+      : params.blocks.map((block) =>
+          trimHex(
+            `0x${signEd25519Message(
+              message,
+              block.participant.keypair
+            ).toString("hex")}`
+          )
+        ),
   };
 }
 
@@ -1158,9 +1653,16 @@ function logCapacityMeasurement(
     authEnvelopeBytes: number;
     serializedTxBytes: number;
     remainingBytes: number;
+    participantBucketCount?: number;
+    channelBucketCount?: number;
+    dynamicWritableAccountCount?: number;
     fits?: boolean;
   }
 ): void {
+  const bucketSummary =
+    measurement.dynamicWritableAccountCount === undefined
+      ? ""
+      : `, bucket locks ${measurement.dynamicWritableAccountCount} (${measurement.participantBucketCount} participant + ${measurement.channelBucketCount} channel)`;
   logStep(
     `${label}: ${measurement.participantCount} participants, ${measurement.channelCount} channels, ${measurement.serializedTxBytes}/${LEGACY_PACKET_DATA_SIZE} bytes ` +
       `(${
@@ -1169,7 +1671,7 @@ function logCapacityMeasurement(
           : `${measurement.remainingBytes} bytes headroom`
       }, round message ${measurement.messageBytes} bytes, auth envelope ${
         measurement.authEnvelopeBytes
-      } bytes)`
+      } bytes${bucketSummary})`
   );
 }
 
@@ -1179,18 +1681,18 @@ function determineMultilateralSearchTargets(
 ): MultilateralSearchTarget {
   const balancedParticipantCount = Math.max(
     3,
-    Math.min(summary.currentV0AltCycle.participantCount, availableParticipants)
+    Math.min(summary.blsV0AltCycle.participantCount, availableParticipants)
   );
   const balancedChannelCount = Math.min(
-    summary.currentV0AltCycle.channelCount,
+    summary.blsV0AltCycle.channelCount,
     balancedParticipantCount * (balancedParticipantCount - 1)
   );
   const overallParticipantCount = Math.max(
     3,
-    Math.min(summary.currentV0AltOverall.participantCount, availableParticipants)
+    Math.min(summary.blsV0AltOverall.participantCount, availableParticipants)
   );
   const overallChannelCount = Math.min(
-    summary.currentV0AltOverall.channelCount,
+    summary.blsV0AltOverall.channelCount,
     overallParticipantCount * (overallParticipantCount - 1)
   );
 
@@ -1209,63 +1711,97 @@ function determineMultilateralSearchTargets(
 function logClearingRoundCapacityAnalysis(
   programId: PublicKey,
   summary: ClearingRoundCapacitySummary,
-  requestedShape: BenchmarkShape,
-  achievedShape: BenchmarkShape
+  maxParticipantScenario: MultilateralScenarioResult,
+  maxChannelScenario: MultilateralScenarioResult
 ): void {
-  const requestedExecutableV0Alt = measureClearingRoundCapacity({
+  const requestedMaxParticipantsV0Alt = measureClearingRoundCapacity({
     programId,
-    mode: "current-ed25519-v0-alt",
-    participantCount: requestedShape.participantCount,
-    channelCount: requestedShape.channelCount,
+    mode: "hypothetical-bls-v0-alt",
+    participantCount:
+      maxParticipantScenario.benchmark.requestedShape?.participantCount ??
+      maxParticipantScenario.benchmark.participantCount,
+    channelCount:
+      maxParticipantScenario.benchmark.requestedShape?.channelCount ??
+      maxParticipantScenario.benchmark.channelCount,
   });
-  const liveExecutableV0Alt = measureClearingRoundCapacity({
+  const liveMaxParticipantsV0Alt = measureClearingRoundCapacity({
     programId,
-    mode: "current-ed25519-v0-alt",
-    participantCount: achievedShape.participantCount,
-    channelCount: achievedShape.channelCount,
+    mode: "hypothetical-bls-v0-alt",
+    participantCount:
+      maxParticipantScenario.benchmark.achievedShape?.participantCount ??
+      maxParticipantScenario.benchmark.participantCount,
+    channelCount:
+      maxParticipantScenario.benchmark.achievedShape?.channelCount ??
+      maxParticipantScenario.settledChannelCount,
+  });
+  const requestedMaxChannelsV0Alt = measureClearingRoundCapacity({
+    programId,
+    mode: "hypothetical-bls-v0-alt",
+    participantCount:
+      maxChannelScenario.benchmark.requestedShape?.participantCount ??
+      maxChannelScenario.benchmark.participantCount,
+    channelCount:
+      maxChannelScenario.benchmark.requestedShape?.channelCount ??
+      maxChannelScenario.benchmark.channelCount,
+  });
+  const liveMaxChannelsV0Alt = measureClearingRoundCapacity({
+    programId,
+    mode: "hypothetical-bls-v0-alt",
+    participantCount:
+      maxChannelScenario.benchmark.achievedShape?.participantCount ??
+      maxChannelScenario.benchmark.participantCount,
+    channelCount:
+      maxChannelScenario.benchmark.achievedShape?.channelCount ??
+      maxChannelScenario.settledChannelCount,
   });
 
   logSection("Clearing Round Capacity");
   logStep(
-    "Current multilateral rounds are limited first by transaction bytes and then by program-side runtime overhead. The live submission path today is self-funded v0 + ALT with one shared clearing-round message plus one pubkey/signature block per participant."
+    "The live devnet submission path is now BLS-backed v0 + ALT: one shared clearing-round message, one aggregate signature, inline BLS keys in participant buckets, and bucketed channel-state updates."
   );
   logStep(
-    "The numbers below focus only on the live v0 + ALT path today and the same path after BLS aggregate signatures compress signer overhead."
+    "These numbers model bucket locks as participant buckets plus channel buckets, then show what the demo actually executed on devnet."
   );
   logCapacityMeasurement(
-    "Largest balanced round demonstrated on the current devnet deployment with v0 + ALT",
-    liveExecutableV0Alt
-  );
-  logCapacityMeasurement(
-    "Largest overall round that fits in bytes with v0 + ALT today",
-    summary.currentV0AltOverall
-  );
-  logCapacityMeasurement(
-    "Hypothetical BLS cycle with v0 + ALT",
+    "BLS v0 + ALT balanced ceiling",
     summary.blsV0AltCycle
   );
   logCapacityMeasurement(
-    "Hypothetical BLS overall round with v0 + ALT",
+    "BLS v0 + ALT overall ceiling",
     summary.blsV0AltOverall
   );
+  logCapacityMeasurement(
+    "Live BLS max-participants request",
+    requestedMaxParticipantsV0Alt
+  );
+  logCapacityMeasurement(
+    "Live BLS max-participants executed",
+    liveMaxParticipantsV0Alt
+  );
+  logCapacityMeasurement(
+    "Live BLS max-channels request",
+    requestedMaxChannelsV0Alt
+  );
+  logCapacityMeasurement(
+    "Live BLS max-channels executed",
+    liveMaxChannelsV0Alt
+  );
   if (
-    achievedShape.participantCount !== requestedShape.participantCount ||
-    achievedShape.channelCount !== requestedShape.channelCount
+    maxParticipantScenario.benchmark.participantCount !==
+      summary.blsV0AltCycle.participantCount ||
+    maxChannelScenario.benchmark.channelCount !==
+      summary.blsV0AltOverall.channelCount
   ) {
     logStep(
-      `The live demo fell back from the requested ${requestedShape.participantCount}-participant / ${requestedShape.channelCount}-channel target to ${achievedShape.participantCount} participants / ${achievedShape.channelCount} channels because current runtime overhead still dominates before the byte ceiling.`
-    );
-    logCapacityMeasurement(
-      "Largest balanced round targeted by the current local/runtime profile",
-      requestedExecutableV0Alt
+      "The live devnet run found a smaller executable shape than the raw BLS byte model in at least one path, which means runtime/compute overhead is now the next scaling constraint after bucketed account compression."
     );
   } else {
     logStep(
-      `The requested ${requestedShape.participantCount}-participant / ${requestedShape.channelCount}-channel target executed successfully on the current devnet deployment.`
+      "The live devnet run matched the current BLS byte model for both the max-participants and max-channels showcase rounds."
     );
   }
   logStep(
-    "BLS helps with signer/auth overhead, but every included channel still has to be advanced, so the next bottleneck after BLS is program-side state handling rather than transaction bytes."
+    `BLS-only bucketed byte model: balanced v0 + ALT rounds fit ${summary.blsV0AltCycle.participantCount} participants / ${summary.blsV0AltCycle.channelCount} channels, and overall v0 + ALT rounds fit ${summary.blsV0AltOverall.participantCount} participants / ${summary.blsV0AltOverall.channelCount} directed channels before byte limits.`
   );
 }
 
@@ -1284,7 +1820,7 @@ function createBenchmarkScenario(params: {
   signedMessageBytes: number;
   signatureCount: number;
   participantBalanceWrites: number;
-  channelStateWrites: number;
+  channelLaneWrites: number;
   notes?: string[];
   requestedShape?: BenchmarkShape;
   achievedShape?: BenchmarkShape;
@@ -1317,7 +1853,7 @@ function createBenchmarkScenario(params: {
     signedMessageBytes: params.signedMessageBytes,
     signatureCount: params.signatureCount,
     participantBalanceWrites: params.participantBalanceWrites,
-    channelStateWrites: params.channelStateWrites,
+    channelLaneWrites: params.channelLaneWrites,
     baselineModel: savings.baselineModel,
     savings,
     notes: params.notes ?? [],
@@ -1378,6 +1914,596 @@ function explorerUrl(signature: string): string {
   return buildExplorerUrl(signature, "devnet");
 }
 
+function buildBlsExecutionInstructions(
+  computeUnitLimit: number,
+  mainInstruction: TransactionInstruction
+): TransactionInstruction[] {
+  return [
+    ComputeBudgetProgram.requestHeapFrame({
+      bytes: 256 * 1024,
+    }),
+    ComputeBudgetProgram.setComputeUnitLimit({
+      units: computeUnitLimit,
+    }),
+    mainInstruction,
+  ];
+}
+
+function readRawU64(data: Buffer, offset: number): bigint {
+  return data.readBigUInt64LE(offset);
+}
+
+function readRawU64Bn(data: Buffer, offset: number): anchor.BN {
+  return new anchor.BN(data.readBigUInt64LE(offset).toString());
+}
+
+function readRawI64Bn(data: Buffer, offset: number): anchor.BN {
+  return new anchor.BN(data.readBigInt64LE(offset).toString());
+}
+
+function readRawPubkey(data: Buffer, offset: number): PublicKey {
+  return new PublicKey(data.subarray(offset, offset + 32));
+}
+
+async function fetchAccountData(
+  connection: Connection,
+  pubkey: PublicKey,
+  label: string
+): Promise<Buffer> {
+  const accountInfo = await connection.getAccountInfo(pubkey, "confirmed");
+  if (!accountInfo || !(accountInfo.data instanceof Buffer)) {
+    throw new Error(`Missing ${label} account data for ${pubkey.toString()}`);
+  }
+  return accountInfo.data;
+}
+
+class ChannelBucketSlotNotInitializedError extends Error {
+  constructor(slotIndex: number, payerId: number, payeeId: number) {
+    super(
+      `Channel bucket slot ${slotIndex} is not initialized for ${payerId}->${payeeId}`
+    );
+    this.name = "ChannelBucketSlotNotInitializedError";
+  }
+}
+
+function isChannelBucketSlotNotInitializedError(error: unknown): boolean {
+  return error instanceof ChannelBucketSlotNotInitializedError;
+}
+
+function formatDecodeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function verifyRawChannelBucketHeader(
+  data: Buffer,
+  expectedBucketId: number,
+  expectedTokenId?: number
+): number {
+  if (data.length < CHANNEL_BUCKET_SPACE) {
+    throw new Error(
+      `channel bucket data is too short: ${data.length} bytes, expected at least ${CHANNEL_BUCKET_SPACE}`
+    );
+  }
+  if (
+    !data
+      .subarray(0, CHANNEL_BUCKET_DISCRIMINATOR.length)
+      .equals(CHANNEL_BUCKET_DISCRIMINATOR)
+  ) {
+    throw new Error("channel bucket discriminator does not match v2 layout");
+  }
+
+  const actualTokenId = data.readUInt16LE(CHANNEL_BUCKET_TOKEN_ID_OFFSET);
+  const actualBucketId = data.readBigUInt64LE(CHANNEL_BUCKET_ID_OFFSET);
+  if (actualBucketId !== BigInt(expectedBucketId)) {
+    throw new Error(
+      `channel bucket id mismatch: expected ${expectedBucketId}, got ${actualBucketId.toString()}`
+    );
+  }
+  if (expectedTokenId !== undefined && actualTokenId !== expectedTokenId) {
+    throw new Error(
+      `channel bucket token mismatch: expected ${expectedTokenId}, got ${actualTokenId}`
+    );
+  }
+
+  return actualTokenId;
+}
+
+function readRawParticipantBucketSlot(data: Buffer, participantId: number) {
+  const slotsDataOffset = 13;
+  const slotSize = 1079;
+  const slotOffset =
+    slotsDataOffset + participantBucketSlotIndex(participantId) * slotSize;
+  const initialized = data[slotOffset] !== 0;
+  const actualParticipantId = data.readUInt32LE(slotOffset + 33);
+  if (!initialized || actualParticipantId !== participantId) {
+    throw new Error(`Participant slot ${participantId} is not initialized`);
+  }
+
+  const tokenBalances = Array.from({ length: 16 }, (_, index) => {
+    const offset = slotOffset + 135 + index * 59;
+    return {
+      initialized: data[offset] !== 0,
+      tokenId: data.readUInt16LE(offset + 1),
+      availableBalance: readRawU64Bn(data, offset + 3),
+      withdrawingBalance: readRawU64Bn(data, offset + 11),
+      withdrawalUnlockAt: readRawI64Bn(data, offset + 19),
+      withdrawalDestination: readRawPubkey(data, offset + 27),
+    };
+  });
+
+  return {
+    initialized,
+    owner: readRawPubkey(data, slotOffset + 1),
+    participantId: actualParticipantId,
+    inboundChannelPolicy: data[slotOffset + 37],
+    blsSchemeVersion: data[slotOffset + 38],
+    blsPubkeyCompressed: Array.from(
+      data.subarray(slotOffset + 39, slotOffset + 135)
+    ),
+    tokenBalances,
+  };
+}
+
+function readRawDirectionalLaneState(data: Buffer, laneOffset: number) {
+  return {
+    initialized:
+      data[laneOffset + CHANNEL_BUCKET_LANE_INITIALIZED_OFFSET] !== 0,
+    settledCumulative: readRawU64Bn(data, laneOffset + 1),
+    lockedBalance: readRawU64Bn(data, laneOffset + 9),
+    authorizedSigner: readRawPubkey(data, laneOffset + 17),
+    pendingUnlockAmount: readRawU64Bn(data, laneOffset + 49),
+    unlockRequestedAt: readRawI64Bn(data, laneOffset + 57),
+    pendingAuthorizedSigner: readRawPubkey(data, laneOffset + 65),
+    authorizedSignerUpdateRequestedAt: readRawI64Bn(data, laneOffset + 97),
+  };
+}
+
+function readRawChannelBucketState(
+  data: Buffer,
+  payerId: number,
+  payeeId: number
+) {
+  const { lowerParticipantId, higherParticipantId } =
+    getCanonicalChannelParticipants(payerId, payeeId);
+  const tokenId = verifyRawChannelBucketHeader(
+    data,
+    channelBucketIdForPair(payerId, payeeId)
+  );
+  const slotIndex = channelBucketSlotIndexForPair(payerId, payeeId);
+  const slotOffset =
+    CHANNEL_BUCKET_SLOTS_OFFSET + slotIndex * CHANNEL_BUCKET_SLOT_SIZE;
+  const initialized =
+    data[slotOffset + CHANNEL_BUCKET_SLOT_INITIALIZED_OFFSET] !== 0;
+  const actualLowerParticipantId = data.readUInt32LE(
+    slotOffset + CHANNEL_BUCKET_SLOT_LOWER_PARTICIPANT_ID_OFFSET
+  );
+  const actualHigherParticipantId = data.readUInt32LE(
+    slotOffset + CHANNEL_BUCKET_SLOT_HIGHER_PARTICIPANT_ID_OFFSET
+  );
+  if (!initialized) {
+    throw new ChannelBucketSlotNotInitializedError(slotIndex, payerId, payeeId);
+  }
+  if (
+    actualLowerParticipantId !== lowerParticipantId ||
+    actualHigherParticipantId !== higherParticipantId
+  ) {
+    throw new Error(
+      `channel bucket slot ${slotIndex} mismatch: expected ${lowerParticipantId}-${higherParticipantId}, got ${actualLowerParticipantId}-${actualHigherParticipantId}`
+    );
+  }
+
+  return {
+    tokenId,
+    lowerParticipantId,
+    higherParticipantId,
+    lowerToHigher: readRawDirectionalLaneState(
+      data,
+      slotOffset + CHANNEL_BUCKET_LOWER_TO_HIGHER_LANE_OFFSET
+    ),
+    higherToLower: readRawDirectionalLaneState(
+      data,
+      slotOffset + CHANNEL_BUCKET_HIGHER_TO_LOWER_LANE_OFFSET
+    ),
+  };
+}
+
+async function fetchRawChannelBucketState(
+  program: Program<AgonProtocol>,
+  channelPda: PublicKey,
+  payerId: number,
+  payeeId: number
+) {
+  const data = await fetchAccountData(
+    program.provider.connection,
+    channelPda,
+    "channel bucket"
+  );
+  return readRawChannelBucketState(data, payerId, payeeId);
+}
+
+function readRawParticipantBucketTokenBalance(
+  data: Buffer,
+  participantId: number,
+  tokenId: number
+): { available: bigint; withdrawing: bigint } {
+  const bucketIdOffset = 8;
+  const slotsDataOffset = 13;
+  const slotSize = 1079;
+  const slotInitializedOffset = 0;
+  const slotParticipantIdOffset = 33;
+  const tokenBalancesOffset = 135;
+  const tokenBalanceCount = 16;
+  const tokenBalanceEntrySize = 59;
+  const tokenBalanceInitializedOffset = 0;
+  const tokenBalanceTokenIdOffset = 1;
+  const tokenBalanceAvailableOffset = 3;
+  const tokenBalanceWithdrawingOffset = 11;
+
+  const expectedBucketId = participantBucketIdForParticipantId(participantId);
+  const actualBucketId = data.readUInt32LE(bucketIdOffset);
+  if (actualBucketId !== expectedBucketId) {
+    throw new Error(
+      `Participant bucket id mismatch: expected ${expectedBucketId}, got ${actualBucketId}`
+    );
+  }
+
+  const slotIndex = participantBucketSlotIndex(participantId);
+  const slotOffset = slotsDataOffset + slotIndex * slotSize;
+  const isInitialized = data[slotOffset + slotInitializedOffset] !== 0;
+  const actualParticipantId = data.readUInt32LE(
+    slotOffset + slotParticipantIdOffset
+  );
+  if (!isInitialized || actualParticipantId !== participantId) {
+    throw new Error(
+      `Participant bucket slot ${slotIndex} is not initialized for participant ${participantId}`
+    );
+  }
+
+  let cursor = slotOffset + tokenBalancesOffset;
+  for (let index = 0; index < tokenBalanceCount; index += 1) {
+    const initialized = data[cursor + tokenBalanceInitializedOffset] !== 0;
+    const entryTokenId = data.readUInt16LE(cursor + tokenBalanceTokenIdOffset);
+    if (initialized && entryTokenId === tokenId) {
+      return {
+        available: readRawU64(data, cursor + tokenBalanceAvailableOffset),
+        withdrawing: readRawU64(data, cursor + tokenBalanceWithdrawingOffset),
+      };
+    }
+    cursor += tokenBalanceEntrySize;
+  }
+
+  return {
+    available: 0n,
+    withdrawing: 0n,
+  };
+}
+
+function readRawChannelBucketLaneState(
+  data: Buffer,
+  payerId: number,
+  payeeId: number
+): {
+  settledCumulative: bigint;
+  lockedBalance: bigint;
+} {
+  const { lowerParticipantId, higherParticipantId } =
+    getCanonicalChannelParticipants(payerId, payeeId);
+
+  const expectedBucketId = channelBucketIdForPair(payerId, payeeId);
+  verifyRawChannelBucketHeader(data, expectedBucketId);
+
+  const slotIndex = channelBucketSlotIndexForPair(payerId, payeeId);
+  const slotOffset =
+    CHANNEL_BUCKET_SLOTS_OFFSET + slotIndex * CHANNEL_BUCKET_SLOT_SIZE;
+  const isInitialized =
+    data[slotOffset + CHANNEL_BUCKET_SLOT_INITIALIZED_OFFSET] !== 0;
+  const actualLowerParticipantId = data.readUInt32LE(
+    slotOffset + CHANNEL_BUCKET_SLOT_LOWER_PARTICIPANT_ID_OFFSET
+  );
+  const actualHigherParticipantId = data.readUInt32LE(
+    slotOffset + CHANNEL_BUCKET_SLOT_HIGHER_PARTICIPANT_ID_OFFSET
+  );
+  if (!isInitialized) {
+    throw new ChannelBucketSlotNotInitializedError(slotIndex, payerId, payeeId);
+  }
+  if (
+    actualLowerParticipantId !== lowerParticipantId ||
+    actualHigherParticipantId !== higherParticipantId
+  ) {
+    throw new Error(
+      `channel bucket slot ${slotIndex} mismatch: expected ${lowerParticipantId}-${higherParticipantId}, got ${actualLowerParticipantId}-${actualHigherParticipantId}`
+    );
+  }
+
+  const laneOffset =
+    payerId < payeeId
+      ? CHANNEL_BUCKET_LOWER_TO_HIGHER_LANE_OFFSET
+      : CHANNEL_BUCKET_HIGHER_TO_LOWER_LANE_OFFSET;
+  const laneBaseOffset = slotOffset + laneOffset;
+  return {
+    settledCumulative: readRawU64(
+      data,
+      laneBaseOffset + CHANNEL_BUCKET_LANE_SETTLED_CUMULATIVE_OFFSET
+    ),
+    lockedBalance: readRawU64(
+      data,
+      laneBaseOffset + CHANNEL_BUCKET_LANE_LOCKED_BALANCE_OFFSET
+    ),
+  };
+}
+
+async function fetchAccountInfosByKey(
+  connection: Connection,
+  pubkeys: PublicKey[]
+): Promise<Map<string, Buffer>> {
+  const result = new Map<string, Buffer>();
+  const chunkSize = 100;
+  for (let offset = 0; offset < pubkeys.length; offset += chunkSize) {
+    const chunk = pubkeys.slice(offset, offset + chunkSize);
+    const accounts = await connection.getMultipleAccountsInfo(
+      chunk,
+      "confirmed"
+    );
+    accounts.forEach((accountInfo, index) => {
+      if (!accountInfo || !(accountInfo.data instanceof Buffer)) {
+        throw new Error(
+          `Missing account data for ${chunk[
+            index
+          ].toString()} during RPC verification`
+        );
+      }
+      result.set(chunk[index].toString(), accountInfo.data);
+    });
+  }
+  return result;
+}
+
+async function verifyMultilateralStateViaRpc(
+  connection: Connection,
+  tokenId: number,
+  preparedRound: MultilateralPreparedRound,
+  participantBalancesBefore: Array<{
+    participant: DemoWallet;
+    balance: TokenBalanceView;
+  }>,
+  participantBalancesAfter: Array<{
+    participant: DemoWallet;
+    balance: TokenBalanceView;
+  }>,
+  channelEdgesAfter: Array<
+    MultilateralChannelEdge & {
+      afterChannel: any;
+    }
+  >
+): Promise<RpcSettlementVerification> {
+  const participantBucketAccounts = await fetchAccountInfosByKey(
+    connection,
+    preparedRound.participants.map((participant) => participant.participantPda)
+  );
+  const channelBucketAccounts = await fetchAccountInfosByKey(
+    connection,
+    preparedRound.edges.map((edge) => edge.channelPda)
+  );
+
+  const participantChecks = participantBalancesAfter.map(
+    ({ participant, balance }, index) => {
+      const rawAccount = participantBucketAccounts.get(
+        participant.participantPda.toString()
+      );
+      if (!rawAccount) {
+        throw new Error(
+          `Missing participant bucket ${participant.participantPda.toString()} during RPC verification`
+        );
+      }
+      const rawBalance = readRawParticipantBucketTokenBalance(
+        rawAccount,
+        participant.participantId,
+        tokenId
+      );
+      return {
+        name: participant.name,
+        participantPda: participant.participantPda,
+        beforeAvailable: BigInt(
+          participantBalancesBefore[index].balance.available
+        ),
+        afterAnchorAvailable: BigInt(balance.available),
+        afterRpcAvailable: rawBalance.available,
+        beforeWithdrawing: BigInt(
+          participantBalancesBefore[index].balance.withdrawing
+        ),
+        afterAnchorWithdrawing: BigInt(balance.withdrawing),
+        afterRpcWithdrawing: rawBalance.withdrawing,
+        matchesAnchor:
+          BigInt(balance.available) === rawBalance.available &&
+          BigInt(balance.withdrawing) === rawBalance.withdrawing,
+      };
+    }
+  );
+
+  const channelChecks = channelEdgesAfter.map(
+    ({ payer, payee, channelPda, channel, afterChannel }) => {
+      const rawAccount = channelBucketAccounts.get(channelPda.toString());
+      if (!rawAccount) {
+        throw new Error(
+          `Missing channel bucket ${channelPda.toString()} during RPC verification`
+        );
+      }
+      const rawChannel = readRawChannelBucketLaneState(
+        rawAccount,
+        payer.participantId,
+        payee.participantId
+      );
+      return {
+        channelLabel: `${payer.name}->${payee.name}`,
+        channelPda,
+        beforeSettledCumulative: BigInt(channel.settledCumulative.toNumber()),
+        afterAnchorSettledCumulative: BigInt(
+          afterChannel.settledCumulative.toNumber()
+        ),
+        afterRpcSettledCumulative: rawChannel.settledCumulative,
+        matchesAnchor:
+          BigInt(afterChannel.settledCumulative.toNumber()) ===
+          rawChannel.settledCumulative,
+      };
+    }
+  );
+
+  return {
+    participantChecks,
+    channelChecks,
+  };
+}
+
+function logRpcSettlementVerification(
+  verification: RpcSettlementVerification,
+  decimals: number,
+  tokenSymbol: string
+): void {
+  const participantMismatches = verification.participantChecks.filter(
+    (check) => !check.matchesAnchor
+  );
+  const channelMismatches = verification.channelChecks.filter(
+    (check) => !check.matchesAnchor
+  );
+
+  logSection("RPC Verification");
+  logStep(
+    `Decoded ${verification.participantChecks.length} participant bucket slots and ${verification.channelChecks.length} channel bucket lanes directly from RPC account bytes`
+  );
+
+  verification.participantChecks.forEach((check) => {
+    logStep(
+      `  RPC ${
+        check.name
+      } ${check.participantPda.toString()}: available ${formatAmount(
+        check.beforeAvailable,
+        decimals
+      )} -> ${formatAmount(
+        check.afterRpcAvailable,
+        decimals
+      )} ${tokenSymbol} (Anchor ${formatAmount(
+        check.afterAnchorAvailable,
+        decimals
+      )}, match=${check.matchesAnchor ? "yes" : "no"})`
+    );
+  });
+
+  const channelChecksToLog =
+    verification.channelChecks.length <= 12
+      ? verification.channelChecks
+      : verification.channelChecks.slice(0, 12);
+  channelChecksToLog.forEach((check) => {
+    logStep(
+      `  RPC ${
+        check.channelLabel
+      } ${check.channelPda.toString()}: settled cumulative ${formatAmount(
+        check.beforeSettledCumulative,
+        decimals
+      )} -> ${formatAmount(
+        check.afterRpcSettledCumulative,
+        decimals
+      )} ${tokenSymbol} (Anchor ${formatAmount(
+        check.afterAnchorSettledCumulative,
+        decimals
+      )}, match=${check.matchesAnchor ? "yes" : "no"})`
+    );
+  });
+  if (verification.channelChecks.length > channelChecksToLog.length) {
+    logStep(
+      `  ... ${
+        verification.channelChecks.length - channelChecksToLog.length
+      } additional channels omitted from console output; all were RPC-verified`
+    );
+  }
+
+  if (participantMismatches.length > 0 || channelMismatches.length > 0) {
+    throw new Error(
+      `RPC verification mismatch: ${participantMismatches.length} participant mismatches, ${channelMismatches.length} channel mismatches`
+    );
+  }
+
+  logStep(
+    "RPC verification passed: raw account bytes matched the reported BLS settlement state"
+  );
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isConfirmationTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.name.includes("TransactionExpiredTimeoutError") ||
+    error.message.includes("was not confirmed in 30.00 seconds")
+  );
+}
+
+function extractTimedOutSignature(error: unknown): string | null {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+  const match = error.message.match(
+    /Check signature ([1-9A-HJ-NP-Za-km-z]{32,88})/
+  );
+  return match?.[1] ?? null;
+}
+
+async function waitForConfirmedSignature(
+  connection: Connection,
+  signature: string,
+  label: string,
+  timeoutMs = 120_000
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = (
+      await connection.getSignatureStatuses([signature], {
+        searchTransactionHistory: true,
+      })
+    ).value[0];
+    if (status?.err) {
+      throw new Error(
+        `${label} landed on-chain but failed: ${JSON.stringify(status.err)}`
+      );
+    }
+    if (
+      status?.confirmationStatus === "confirmed" ||
+      status?.confirmationStatus === "finalized"
+    ) {
+      logStep(
+        `${label} recovered after RPC confirmation lag (${signature}, ${status.confirmationStatus})`
+      );
+      return signature;
+    }
+    await sleepMs(1_000);
+  }
+
+  throw new Error(
+    `${label} exceeded the local confirmation timeout and never reached confirmed/finalized status for signature ${signature}`
+  );
+}
+
+async function recoverTimedOutRpcSignature(
+  connection: Connection,
+  error: unknown,
+  label: string
+): Promise<string | null> {
+  if (!isConfirmationTimeoutError(error)) {
+    return null;
+  }
+  const signature = extractTimedOutSignature(error);
+  if (!signature) {
+    return null;
+  }
+  logStep(
+    `${label} hit Anchor's 30s confirmation timeout; polling RPC directly for ${signature}`
+  );
+  return waitForConfirmedSignature(connection, signature, label);
+}
+
 async function fetchSerializedTransactionBytes(
   connection: Connection,
   signature: string
@@ -1409,7 +2535,10 @@ async function selectFeeSponsor(
   let bestCandidate: Keypair | null = null;
   let bestBalance = -1;
   for (const candidate of uniqueCandidates.values()) {
-    const balance = await connection.getBalance(candidate.publicKey, "confirmed");
+    const balance = await connection.getBalance(
+      candidate.publicKey,
+      "confirmed"
+    );
     if (balance > bestBalance) {
       bestBalance = balance;
       bestCandidate = candidate;
@@ -1475,10 +2604,21 @@ async function sendLegacyTransaction(
       preflightCommitment: "confirmed",
     }
   );
-  await connection.confirmTransaction(
-    { signature, blockhash, lastValidBlockHeight },
-    "confirmed"
-  );
+  try {
+    await connection.confirmTransaction(
+      { signature, blockhash, lastValidBlockHeight },
+      "confirmed"
+    );
+  } catch (error) {
+    if (!isConfirmationTimeoutError(error)) {
+      throw error;
+    }
+    await waitForConfirmedSignature(
+      connection,
+      signature,
+      "Legacy transaction"
+    );
+  }
   return signature;
 }
 
@@ -1569,6 +2709,36 @@ async function createLookupTableForAddresses(
   return lookupTable;
 }
 
+async function createLookupTablesForAddresses(
+  connection: Connection,
+  authority: Keypair,
+  payer: Keypair,
+  addresses: PublicKey[]
+): Promise<AddressLookupTableAccount[]> {
+  const uniqueAddresses = Array.from(
+    new Map(addresses.map((address) => [address.toString(), address])).values()
+  );
+  const lookupTables: AddressLookupTableAccount[] = [];
+  const maxAddressesPerTable = 256;
+
+  for (
+    let offset = 0;
+    offset < uniqueAddresses.length;
+    offset += maxAddressesPerTable
+  ) {
+    lookupTables.push(
+      await createLookupTableForAddresses(
+        connection,
+        authority,
+        payer,
+        uniqueAddresses.slice(offset, offset + maxAddressesPerTable)
+      )
+    );
+  }
+
+  return lookupTables;
+}
+
 async function estimateVersionedTransactionBytes(params: {
   connection: Connection;
   feePayer: Keypair;
@@ -1587,15 +2757,143 @@ async function estimateVersionedTransactionBytes(params: {
   return transaction.serialize().length;
 }
 
+async function simulateVersionedTransaction(params: {
+  connection: Connection;
+  feePayer: Keypair;
+  instructions: TransactionInstruction[];
+  lookupTables: AddressLookupTableAccount[];
+  extraSigners?: Keypair[];
+}): Promise<{
+  ok: boolean;
+  error: string | null;
+  logs: string[];
+}> {
+  return withRpcRetry("simulate versioned transaction", async () => {
+    const { blockhash } = await params.connection.getLatestBlockhash(
+      "confirmed"
+    );
+    const message = new TransactionMessage({
+      payerKey: params.feePayer.publicKey,
+      recentBlockhash: blockhash,
+      instructions: params.instructions,
+    }).compileToV0Message(params.lookupTables);
+    const transaction = new VersionedTransaction(message);
+    transaction.sign([params.feePayer, ...(params.extraSigners ?? [])]);
+    const simulation = await params.connection.simulateTransaction(
+      transaction,
+      {
+        commitment: "confirmed",
+        sigVerify: true,
+      }
+    );
+    return {
+      ok: simulation.value.err == null,
+      error:
+        simulation.value.err == null
+          ? null
+          : JSON.stringify(simulation.value.err),
+      logs: simulation.value.logs ?? [],
+    };
+  });
+}
+
+async function getTransactionErrorLogs(
+  connection: Connection,
+  error: unknown
+): Promise<string[]> {
+  if (error instanceof SendTransactionError) {
+    try {
+      return await error.getLogs(connection);
+    } catch {
+      return error.logs ?? error.transactionError.logs ?? [];
+    }
+  }
+
+  const maybeLogs =
+    (error as any)?.logs ??
+    (error as any)?.transactionError?.logs ??
+    (error as any)?.data?.logs;
+  return Array.isArray(maybeLogs) ? maybeLogs : [];
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isTransientRpcError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+  return (
+    message.includes("fetch failed") ||
+    message.includes("econnreset") ||
+    message.includes("etimedout") ||
+    message.includes("socket") ||
+    message.includes("429") ||
+    message.includes("too many requests")
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function withRpcRetry<T>(
+  label: string,
+  operation: () => Promise<T>,
+  maxAttempts = 4
+): Promise<T> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientRpcError(error) || attempt === maxAttempts) {
+        throw error;
+      }
+      const delayMs = 400 * attempt;
+      logStep(
+        `${label} RPC attempt ${attempt}/${maxAttempts} failed transiently (${errorMessage(
+          error
+        )}); retrying in ${delayMs}ms`
+      );
+      await sleep(delayMs);
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`${label} failed after ${maxAttempts} attempts`);
+}
+
+async function enrichTransactionError(
+  connection: Connection,
+  error: unknown
+): Promise<Error> {
+  const logs = await getTransactionErrorLogs(connection, error);
+  const message = errorMessage(error);
+  const enriched = new Error(
+    logs.length > 0
+      ? `${message}\nFull transaction logs:\n${JSON.stringify(logs, null, 2)}`
+      : message
+  );
+  (enriched as any).cause = error;
+  (enriched as any).logs = logs;
+  return enriched;
+}
+
 async function sendVersionedTransaction(params: {
   connection: Connection;
   feePayer: Keypair;
   instructions: TransactionInstruction[];
   lookupTables: AddressLookupTableAccount[];
   extraSigners?: Keypair[];
+  skipPreflight?: boolean;
 }): Promise<string> {
-  const { blockhash, lastValidBlockHeight } =
-    await params.connection.getLatestBlockhash("confirmed");
+  const { blockhash, lastValidBlockHeight } = await withRpcRetry(
+    "get latest blockhash",
+    () => params.connection.getLatestBlockhash("confirmed")
+  );
   const message = new TransactionMessage({
     payerKey: params.feePayer.publicKey,
     recentBlockhash: blockhash,
@@ -1603,17 +2901,42 @@ async function sendVersionedTransaction(params: {
   }).compileToV0Message(params.lookupTables);
   const transaction = new VersionedTransaction(message);
   transaction.sign([params.feePayer, ...(params.extraSigners ?? [])]);
-  const signature = await params.connection.sendRawTransaction(
-    transaction.serialize(),
-    {
-      preflightCommitment: "confirmed",
+  const serializedTransaction = transaction.serialize();
+  try {
+    const signature = await withRpcRetry("send raw transaction", () =>
+      params.connection.sendRawTransaction(serializedTransaction, {
+        preflightCommitment: "confirmed",
+        skipPreflight: params.skipPreflight ?? false,
+      })
+    );
+    const confirmation = await withRpcRetry("confirm transaction", () =>
+      params.connection.confirmTransaction(
+        { signature, blockhash, lastValidBlockHeight },
+        "confirmed"
+      )
+    );
+    if (confirmation.value.err) {
+      const failedTransaction = await withRpcRetry(
+        "fetch failed transaction logs",
+        () =>
+          params.connection.getTransaction(signature, {
+            commitment: "confirmed",
+            maxSupportedTransactionVersion: 0,
+          }),
+        2
+      ).catch(() => null);
+      const error = new Error(
+        `Transaction ${signature} failed after submission: ${JSON.stringify(
+          confirmation.value.err
+        )}`
+      );
+      (error as any).logs = failedTransaction?.meta?.logMessages ?? [];
+      throw error;
     }
-  );
-  await params.connection.confirmTransaction(
-    { signature, blockhash, lastValidBlockHeight },
-    "confirmed"
-  );
-  return signature;
+    return signature;
+  } catch (error) {
+    throw await enrichTransactionError(params.connection, error);
+  }
 }
 
 function getParticipantTokenBalance(
@@ -1629,17 +2952,54 @@ function getParticipantTokenBalance(
   };
 }
 
+async function fetchParticipantById(
+  program: Program<AgonProtocol>,
+  participantId: number
+) {
+  const participantPda = findParticipantBucketPda(
+    program.programId,
+    participantId
+  );
+  const slot = readRawParticipantBucketSlot(
+    await fetchAccountData(
+      program.provider.connection,
+      participantPda,
+      "participant bucket"
+    ),
+    participantId
+  );
+  return {
+    participant: normalizeParticipantBucketSlot(slot),
+    participantPda,
+  };
+}
+
+async function fetchParticipantByOwner(
+  program: Program<AgonProtocol>,
+  owner: PublicKey
+) {
+  const ownerIndexPda = findOwnerIndexBucketPda(program.programId, owner);
+  const ownerIndexBucket = await (
+    program.account as any
+  ).ownerIndexBucket.fetch(ownerIndexPda);
+  const ownerSlot = ownerIndexBucket.slots.find(
+    (slot: any) =>
+      slot.initialized && new PublicKey(slot.owner.toString()).equals(owner)
+  );
+  if (!ownerSlot) {
+    throw new Error(`Participant owner ${owner.toString()} is not indexed`);
+  }
+  return fetchParticipantById(program, ownerSlot.participantId);
+}
+
 async function fetchInternalBalance(
   program: Program<AgonProtocol>,
   wallet: DemoWallet,
   tokenId: number
 ): Promise<TokenBalanceView> {
-  wallet.participantPda = findParticipantPda(
-    program.programId,
+  const { participant, participantPda } = await fetchParticipantByOwner(
+    program,
     wallet.keypair.publicKey
-  );
-  const participant = await program.account.participantAccount.fetch(
-    wallet.participantPda
   );
   const participantOwner = new PublicKey(participant.owner.toString());
   if (!participantOwner.equals(wallet.keypair.publicKey)) {
@@ -1649,6 +3009,7 @@ async function fetchInternalBalance(
       }: on-chain owner ${participantOwner.toString()} does not match wallet ${wallet.keypair.publicKey.toString()}`
     );
   }
+  wallet.participantPda = participantPda;
   wallet.participantId = participant.participantId;
   return getParticipantTokenBalance(participant, tokenId);
 }
@@ -1666,6 +3027,141 @@ async function saveRunManifest(
 ): Promise<void> {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, `${JSON.stringify(content, null, 2)}\n`, "utf8");
+}
+
+function serializeWalletForManifest(wallet: DemoWallet): DemoManifestWallet {
+  return {
+    name: wallet.name,
+    publicKey: wallet.keypair.publicKey.toString(),
+    participantId: wallet.participantId >= 0 ? wallet.participantId : undefined,
+    participantPda: wallet.participantPda.equals(PublicKey.default)
+      ? undefined
+      : wallet.participantPda.toString(),
+    tokenAccount: wallet.tokenAccount.equals(PublicKey.default)
+      ? undefined
+      : wallet.tokenAccount.toString(),
+    secretPath: wallet.secretPath,
+  };
+}
+
+function walletNameForIndex(index: number): string {
+  return DEMO_WALLET_BASE_NAMES[index] ?? `Agent${index + 1}`;
+}
+
+function walletIndexFromSecretPath(secretPath: string): number | null {
+  const match = path.basename(secretPath).match(/^(\d+)-/);
+  if (!match) {
+    return null;
+  }
+  const index = Number(match[1]);
+  return Number.isInteger(index) && index > 0 ? index - 1 : null;
+}
+
+function walletNameFromSecretPath(secretPath: string): string {
+  const walletIndex = walletIndexFromSecretPath(secretPath);
+  if (walletIndex !== null) {
+    return walletNameForIndex(walletIndex);
+  }
+
+  const fileStem = path.basename(secretPath, ".json").replace(/^\d+-/, "");
+  return fileStem.length > 0
+    ? fileStem
+        .split("-")
+        .filter(Boolean)
+        .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+        .join("")
+    : "Agent";
+}
+
+function compareManifestWallets(
+  left: DemoManifestWallet,
+  right: DemoManifestWallet
+): number {
+  const leftIndex = walletIndexFromSecretPath(left.secretPath);
+  const rightIndex = walletIndexFromSecretPath(right.secretPath);
+  if (leftIndex !== null && rightIndex !== null && leftIndex !== rightIndex) {
+    return leftIndex - rightIndex;
+  }
+  if (leftIndex !== null && rightIndex === null) {
+    return -1;
+  }
+  if (leftIndex === null && rightIndex !== null) {
+    return 1;
+  }
+  return left.name.localeCompare(right.name);
+}
+
+function mergeExistingWalletManifestEntries(
+  outputPath: string,
+  walletEntries: DemoManifestWallet[]
+): DemoManifestWallet[] {
+  if (!fs.existsSync(outputPath)) {
+    return walletEntries;
+  }
+
+  let existingManifest: Partial<DemoRunManifest> | null = null;
+  try {
+    existingManifest = JSON.parse(fs.readFileSync(outputPath, "utf8"));
+  } catch {
+    return walletEntries;
+  }
+  if (!Array.isArray(existingManifest?.wallets)) {
+    return walletEntries;
+  }
+
+  const merged = [...walletEntries];
+  const seen = new Set(
+    walletEntries.map((entry) => entry.publicKey || entry.secretPath)
+  );
+  for (const existingEntry of existingManifest.wallets) {
+    const identity = existingEntry.publicKey || existingEntry.secretPath;
+    if (!identity || seen.has(identity)) {
+      continue;
+    }
+    merged.push(existingEntry);
+    seen.add(identity);
+  }
+
+  return merged.sort(compareManifestWallets);
+}
+
+async function saveWalletManifest(
+  outputPath: string,
+  provider: anchor.AnchorProvider,
+  program: Program<AgonProtocol>,
+  deployer: Keypair,
+  tokenId: number,
+  tokenSymbol: string,
+  tokenMint: PublicKey,
+  decimals: number,
+  vaultTokenAccount: PublicKey,
+  feeRecipient: PublicKey,
+  wallets: DemoWallet[],
+  runId: string,
+  reusedFromManifest: string | null
+): Promise<void> {
+  const walletEntries = mergeExistingWalletManifestEntries(
+    outputPath,
+    wallets.map(serializeWalletForManifest)
+  );
+  await saveRunManifest(outputPath, {
+    runId,
+    network: inferNetwork(provider.connection.rpcEndpoint),
+    rpcEndpoint: provider.connection.rpcEndpoint,
+    programId: program.programId.toString(),
+    deployer: deployer.publicKey.toString(),
+    token: {
+      id: tokenId,
+      symbol: tokenSymbol,
+      mint: tokenMint.toString(),
+      decimals,
+      vaultTokenAccount: vaultTokenAccount.toString(),
+    },
+    feeRecipient: feeRecipient.toString(),
+    reusedFromManifest,
+    generatedAt: new Date().toISOString(),
+    wallets: walletEntries,
+  });
 }
 
 function shouldLogProgress(
@@ -1690,96 +3186,198 @@ function loadKeypair(secretPath: string): Keypair {
 async function createWalletFiles(
   count: number,
   repoRoot: string
-): Promise<{ runId: string; walletDir: string; wallets: DemoWallet[] }> {
-  const names = [
-    "Alice",
-    "Bob",
-    "Carol",
-    "Dave",
-    "Erin",
-    "Frank",
-    "Grace",
-    "Heidi",
-    "Ivan",
-    "Judy",
-  ];
+): Promise<PreparedWalletSet> {
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   const walletDir = path.join(repoRoot, "keys", "agon-protocol-demo", runId);
   fs.mkdirSync(walletDir, { recursive: true });
   const wallets: DemoWallet[] = [];
   for (let index = 0; index < count; index += 1) {
     const keypair = Keypair.generate();
-    const fileName = `${String(index + 1).padStart(2, "0")}-${names[
-      index
-    ].toLowerCase()}.json`;
+    const name = walletNameForIndex(index);
+    const fileName = `${String(index + 1).padStart(
+      2,
+      "0"
+    )}-${name.toLowerCase()}.json`;
     const secretPath = path.join(walletDir, fileName);
     fs.writeFileSync(secretPath, JSON.stringify(Array.from(keypair.secretKey)));
+    const blsKeypair = deriveWalletBlsKeypair(keypair);
     wallets.push({
-      name: names[index],
+      name,
       keypair,
       secretPath,
       participantPda: PublicKey.default,
       participantId: -1,
       tokenAccount: PublicKey.default,
+      blsSecretScalar: blsKeypair.secretScalar,
+      blsPublicKeyCompressed: blsKeypair.publicKeyCompressed,
     });
   }
-  return { runId, walletDir, wallets };
+  return { runId, walletDir, wallets, source: "created" };
+}
+
+function loadWalletFromManifestEntry(
+  entry: DemoManifestWallet,
+  repoRoot: string
+): DemoWallet {
+  const secretPath = resolveInputPath(repoRoot, entry.secretPath);
+  if (!fs.existsSync(secretPath)) {
+    throw new Error(`Wallet secret file not found: ${secretPath}`);
+  }
+  const keypair = loadKeypair(secretPath);
+  if (entry.publicKey && entry.publicKey !== keypair.publicKey.toString()) {
+    throw new Error(
+      `Manifest public key mismatch for ${entry.name}: expected ${
+        entry.publicKey
+      }, found ${keypair.publicKey.toString()}`
+    );
+  }
+  const blsKeypair = deriveWalletBlsKeypair(keypair);
+  return {
+    name: entry.name,
+    keypair,
+    secretPath,
+    // Re-derive participant state from the current program at runtime.
+    participantPda: PublicKey.default,
+    participantId: -1,
+    tokenAccount: entry.tokenAccount
+      ? new PublicKey(entry.tokenAccount)
+      : PublicKey.default,
+    blsSecretScalar: blsKeypair.secretScalar,
+    blsPublicKeyCompressed: blsKeypair.publicKeyCompressed,
+  };
+}
+
+function expandManifestWalletsFromDirectory(
+  manifestWallets: DemoManifestWallet[],
+  walletCount: number,
+  repoRoot: string
+): DemoManifestWallet[] {
+  if (manifestWallets.length >= walletCount || manifestWallets.length === 0) {
+    return manifestWallets;
+  }
+
+  const firstSecretPath = resolveInputPath(
+    repoRoot,
+    manifestWallets[0].secretPath
+  );
+  const walletDir = path.dirname(firstSecretPath);
+  if (!fs.existsSync(walletDir)) {
+    return manifestWallets;
+  }
+
+  const knownSecretPaths = new Set(
+    manifestWallets.map((entry) => resolveInputPath(repoRoot, entry.secretPath))
+  );
+  const expanded = [...manifestWallets];
+  const candidateSecretPaths = fs
+    .readdirSync(walletDir)
+    .filter((fileName) => fileName.endsWith(".json"))
+    .map((fileName) => path.join(walletDir, fileName))
+    .sort((left, right) =>
+      compareManifestWallets(
+        {
+          name: walletNameFromSecretPath(left),
+          publicKey: "",
+          secretPath: left,
+        },
+        {
+          name: walletNameFromSecretPath(right),
+          publicKey: "",
+          secretPath: right,
+        }
+      )
+    );
+
+  for (const secretPath of candidateSecretPaths) {
+    if (expanded.length >= walletCount) {
+      break;
+    }
+    if (knownSecretPaths.has(secretPath)) {
+      continue;
+    }
+    const keypair = loadKeypair(secretPath);
+    expanded.push({
+      name: walletNameFromSecretPath(secretPath),
+      publicKey: keypair.publicKey.toString(),
+      secretPath,
+    });
+    knownSecretPaths.add(secretPath);
+  }
+
+  return expanded.sort(compareManifestWallets);
 }
 
 async function loadWalletsFromManifest(
   manifestPath: string,
   walletCount: number,
   repoRoot: string
-): Promise<{ runId: string; walletDir: string; wallets: DemoWallet[] }> {
+): Promise<PreparedWalletSet> {
   const resolvedManifestPath = resolveInputPath(repoRoot, manifestPath);
   const manifest = JSON.parse(
     fs.readFileSync(resolvedManifestPath, "utf8")
   ) as DemoRunManifest;
 
-  if (
-    !Array.isArray(manifest.wallets) ||
-    manifest.wallets.length < walletCount
-  ) {
+  const manifestWallets = expandManifestWalletsFromDirectory(
+    Array.isArray(manifest.wallets) ? manifest.wallets : [],
+    walletCount,
+    repoRoot
+  );
+
+  if (manifestWallets.length < walletCount) {
     throw new Error(
       `Manifest ${resolvedManifestPath} only contains ${
         manifest.wallets?.length ?? 0
-      } wallets, but ${walletCount} are required`
+      } wallets and only ${
+        manifestWallets.length
+      } could be recovered from the wallet directory, but ${walletCount} are required`
     );
   }
 
-  const wallets: DemoWallet[] = manifest.wallets
+  const wallets: DemoWallet[] = manifestWallets
     .slice(0, walletCount)
-    .map((entry) => {
-      const secretPath = resolveInputPath(repoRoot, entry.secretPath);
-      if (!fs.existsSync(secretPath)) {
-        throw new Error(`Wallet secret file not found: ${secretPath}`);
-      }
-      const keypair = loadKeypair(secretPath);
-      if (entry.publicKey && entry.publicKey !== keypair.publicKey.toString()) {
-        throw new Error(
-          `Manifest public key mismatch for ${entry.name}: expected ${
-            entry.publicKey
-          }, found ${keypair.publicKey.toString()}`
-        );
-      }
-      return {
-        name: entry.name,
-        keypair,
-        secretPath,
-        // Re-derive participant state from the current program at runtime.
-        participantPda: PublicKey.default,
-        participantId: -1,
-        tokenAccount: entry.tokenAccount
-          ? new PublicKey(entry.tokenAccount)
-          : PublicKey.default,
-      };
-    });
+    .map((entry) => loadWalletFromManifestEntry(entry, repoRoot));
 
   return {
     runId: new Date().toISOString().replace(/[:.]/g, "-"),
     walletDir: path.dirname(wallets[0].secretPath),
     wallets,
+    source: "manifest",
+    manifestPath: resolvedManifestPath,
   };
+}
+
+function resolveDefaultWalletManifestPath(
+  repoRoot: string,
+  walletManifestPath: string
+): string {
+  return resolveInputPath(repoRoot, walletManifestPath);
+}
+
+async function prepareDemoWallets(
+  options: CliOptions,
+  repoRoot: string
+): Promise<PreparedWalletSet> {
+  if (options.reuseManifestPath) {
+    return loadWalletsFromManifest(
+      options.reuseManifestPath,
+      options.walletCount,
+      repoRoot
+    );
+  }
+
+  const defaultManifestPath = resolveDefaultWalletManifestPath(
+    repoRoot,
+    options.walletManifestPath
+  );
+  if (fs.existsSync(defaultManifestPath)) {
+    return loadWalletsFromManifest(
+      defaultManifestPath,
+      options.walletCount,
+      repoRoot
+    );
+  }
+
+  return createWalletFiles(options.walletCount, repoRoot);
 }
 
 function selectActiveWallets(
@@ -1819,7 +3417,48 @@ function loadProgram(provider: anchor.AnchorProvider): Program<AgonProtocol> {
     "agon_protocol.json"
   );
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf8"));
-  return new Program(idl as AgonProtocol, provider);
+  const resolvedProgramId = resolveProgramId(provider, idl);
+  return new Program(
+    { ...idl, address: resolvedProgramId.toString() } as AgonProtocol,
+    provider
+  );
+}
+
+function resolveProgramId(
+  provider: anchor.AnchorProvider,
+  idl: { address?: string }
+): PublicKey {
+  const fromEnv = process.env.AGON_PROGRAM_ID?.trim();
+  if (fromEnv) {
+    return new PublicKey(fromEnv);
+  }
+
+  const anchorTomlPath = path.join(__dirname, "..", "Anchor.toml");
+  if (fs.existsSync(anchorTomlPath)) {
+    const network = inferNetwork(provider.connection.rpcEndpoint);
+    const sectionHeader = `[programs.${network}]`;
+    let inSection = false;
+    for (const line of fs.readFileSync(anchorTomlPath, "utf8").split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("[")) {
+        inSection = trimmed === sectionHeader;
+        continue;
+      }
+      if (!inSection) continue;
+      const match = trimmed.match(/^agon_protocol\s*=\s*"([^"]+)"$/);
+      if (match) {
+        return new PublicKey(match[1]);
+      }
+    }
+  }
+
+  if (idl.address) {
+    return new PublicKey(idl.address);
+  }
+
+  throw new Error(
+    "Unable to resolve program id. Set AGON_PROGRAM_ID or update Anchor.toml."
+  );
 }
 
 function createWallet(payer: Keypair): anchor.Wallet & { payer: Keypair } {
@@ -1850,7 +3489,7 @@ function createWallet(payer: Keypair): anchor.Wallet & { payer: Keypair } {
 
 function loadProvider(): anchor.AnchorProvider {
   const rpcEndpoint =
-    process.env.ANCHOR_PROVIDER_URL ?? "https://api.devnet.solana.com";
+    process.env.ANCHOR_PROVIDER_URL ?? resolveProjectRpcUrl("devnet");
   const walletPath =
     process.env.ANCHOR_WALLET ??
     path.join(process.cwd(), "keys", "devnet-deployer.json");
@@ -2040,16 +3679,13 @@ async function ensureParticipants(
   wallets: DemoWallet[],
   skipInitialization: boolean
 ): Promise<void> {
-  const globalConfig = findGlobalConfigPda(program.programId);
   for (const wallet of wallets) {
-    wallet.participantPda = findParticipantPda(
-      program.programId,
-      wallet.keypair.publicKey
-    );
     try {
-      const participant = await program.account.participantAccount.fetch(
-        wallet.participantPda
+      const { participant, participantPda } = await fetchParticipantByOwner(
+        program,
+        wallet.keypair.publicKey
       );
+      wallet.participantPda = participantPda;
       const participantOwner = new PublicKey(participant.owner.toString());
       if (!participantOwner.equals(wallet.keypair.publicKey)) {
         throw new Error(
@@ -2064,25 +3700,112 @@ async function ensureParticipants(
           `Participant ${wallet.name} is not initialized on-chain, but AGON_DEMO_SKIP_PARTICIPANT_INIT is enabled`
         );
       }
+      const globalConfigAccount = await program.account.globalConfig.fetch(
+        findGlobalConfigPda(program.programId)
+      );
+      const participantId = Number(globalConfigAccount.nextParticipantId);
+      wallet.participantPda = findParticipantBucketPda(
+        program.programId,
+        participantId
+      );
       const signature = await program.methods
-        .initializeParticipant()
+        .initializeParticipant(
+          participantBucketIdForParticipantId(participantId),
+          ownerIndexBucketIdForOwner(wallet.keypair.publicKey)
+        )
         .accounts({
-          globalConfig,
-          participantAccount: wallet.participantPda,
+          globalConfig: findGlobalConfigPda(program.programId),
+          participantBucket: wallet.participantPda,
+          ownerIndexBucket: findOwnerIndexBucketPda(
+            program.programId,
+            wallet.keypair.publicKey
+          ),
           feeRecipient,
           owner: wallet.keypair.publicKey,
           systemProgram: SystemProgram.programId,
         } as any)
         .signers([wallet.keypair])
         .rpc();
-      const participant = await program.account.participantAccount.fetch(
-        wallet.participantPda
+      const { participant } = await fetchParticipantById(
+        program,
+        participantId
       );
       wallet.participantId = participant.participantId;
       logStep(
         `Registered ${wallet.name} as participant ${wallet.participantId} (${signature})`
       );
     }
+  }
+}
+
+async function ensureParticipantBlsKeys(
+  program: Program<AgonProtocol>,
+  messageDomain: Buffer,
+  wallets: DemoWallet[]
+): Promise<void> {
+  logSection("Participant BLS Keys");
+  const globalConfig = findGlobalConfigPda(program.programId);
+
+  for (const wallet of wallets) {
+    if (wallet.participantId < 0) {
+      throw new Error(
+        `Cannot register a BLS key for ${wallet.name} before participant initialization`
+      );
+    }
+
+    const { participant } = await fetchParticipantById(
+      program,
+      wallet.participantId
+    );
+    const participantWithInlineBls = participant as any;
+    const registeredSchemeVersion = Number(
+      participantWithInlineBls.blsSchemeVersion ?? 0
+    );
+    const registeredPubkey = Buffer.from(
+      participantWithInlineBls.blsPubkeyCompressed ?? []
+    );
+    if (
+      registeredSchemeVersion === 1 &&
+      registeredPubkey.equals(wallet.blsPublicKeyCompressed)
+    ) {
+      logStep(
+        `Reused ${wallet.name}'s inline BLS key registration on participant ${wallet.participantId}`
+      );
+      continue;
+    }
+    if (registeredSchemeVersion !== 0) {
+      throw new Error(
+        `Unsupported BLS scheme version ${registeredSchemeVersion} already registered for ${wallet.name}`
+      );
+    }
+
+    const popMessage = createBlsRegistrationMessage({
+      participantId: wallet.participantId,
+      owner: wallet.keypair.publicKey,
+      blsPubkeyCompressed: wallet.blsPublicKeyCompressed,
+      messageDomain,
+    });
+    const popSignatureCompressed = signBlsMessage(wallet, popMessage);
+    const signature = await program.methods
+      .registerParticipantBlsKey(
+        [...wallet.blsPublicKeyCompressed],
+        [...popSignatureCompressed]
+      )
+      .accounts({
+        globalConfig,
+        participantBucket: wallet.participantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(
+          program.programId,
+          wallet.keypair.publicKey
+        ),
+        owner: wallet.keypair.publicKey,
+      } as any)
+      .signers([wallet.keypair])
+      .rpc();
+
+    logStep(
+      `Registered ${wallet.name}'s BLS key for participant ${wallet.participantId} (${signature})`
+    );
   }
 }
 
@@ -2093,17 +3816,30 @@ async function depositForWallet(
   amount: number,
   vaultTokenAccount: PublicKey
 ): Promise<string> {
-  wallet.participantPda = findParticipantPda(
-    program.programId,
-    wallet.keypair.publicKey
-  );
+  if (wallet.participantId < 0) {
+    const { participant, participantPda } = await fetchParticipantByOwner(
+      program,
+      wallet.keypair.publicKey
+    );
+    wallet.participantId = participant.participantId;
+    wallet.participantPda = participantPda;
+  } else {
+    wallet.participantPda = findParticipantBucketPda(
+      program.programId,
+      wallet.participantId
+    );
+  }
   try {
     return await program.methods
       .deposit(tokenId, new anchor.BN(amount))
       .accounts({
         tokenRegistry: findTokenRegistryPda(program.programId),
         globalConfig: findGlobalConfigPda(program.programId),
-        participantAccount: wallet.participantPda,
+        participantBucket: wallet.participantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(
+          program.programId,
+          wallet.keypair.publicKey
+        ),
         ownerTokenAccount: wallet.tokenAccount,
         vaultTokenAccount,
         owner: wallet.keypair.publicKey,
@@ -2173,11 +3909,163 @@ async function ensureDeposits(
   }
 }
 
+async function ensureMinimumInternalBalances(
+  program: Program<AgonProtocol>,
+  wallets: DemoWallet[],
+  tokenId: number,
+  tokenSymbol: string,
+  decimals: number,
+  vaultTokenAccount: PublicKey,
+  minimumRawByParticipantId: Map<number, number>
+): Promise<void> {
+  logSection("BLS Round Liquidity Check");
+  for (const wallet of wallets) {
+    const requiredRaw =
+      minimumRawByParticipantId.get(wallet.participantId) ?? 0;
+    if (requiredRaw <= 0) {
+      continue;
+    }
+
+    const currentBalance = await fetchInternalBalance(program, wallet, tokenId);
+    if (currentBalance.available >= requiredRaw) {
+      logStep(
+        `${wallet.name} already covers the BLS round minimum (${formatAmount(
+          currentBalance.available,
+          decimals
+        )} / ${formatAmount(requiredRaw, decimals)} ${tokenSymbol})`
+      );
+      continue;
+    }
+
+    const topUpAmount = requiredRaw - currentBalance.available;
+    const signature = await depositForWallet(
+      program,
+      wallet,
+      tokenId,
+      topUpAmount,
+      vaultTokenAccount
+    );
+    logStep(
+      `${wallet.name} topped up ${formatAmount(
+        topUpAmount,
+        decimals
+      )} ${tokenSymbol} for the BLS clearing round (${signature})`
+    );
+  }
+}
+
+async function ensureTargetInternalBalances(
+  program: Program<AgonProtocol>,
+  wallets: DemoWallet[],
+  tokenId: number,
+  tokenSymbol: string,
+  decimals: number,
+  vaultTokenAccount: PublicKey,
+  targetAmount: number
+): Promise<void> {
+  logSection("BLS Base Liquidity");
+  const targetRaw = toRawAmount(targetAmount, decimals);
+  for (const wallet of wallets) {
+    const currentBalance = await fetchInternalBalance(program, wallet, tokenId);
+    if (currentBalance.available >= targetRaw) {
+      logStep(
+        `${wallet.name} already holds ${formatAmount(
+          currentBalance.available,
+          decimals
+        )} / ${formatAmount(targetRaw, decimals)} ${tokenSymbol} internally`
+      );
+      continue;
+    }
+
+    const topUpAmount = targetRaw - currentBalance.available;
+    const signature = await depositForWallet(
+      program,
+      wallet,
+      tokenId,
+      topUpAmount,
+      vaultTokenAccount
+    );
+    logStep(
+      `${wallet.name} topped up ${formatAmount(
+        topUpAmount,
+        decimals
+      )} ${tokenSymbol} to reach the reusable BLS base balance (${signature})`
+    );
+  }
+}
+
+async function ensureDenseGraphChannels(
+  program: Program<AgonProtocol>,
+  participants: DemoWallet[],
+  tokenId: number,
+  maxDirectedChannels: number
+): Promise<MultilateralChannelEdge[]> {
+  logSection("BLS Dense Graph Setup");
+  const orderedPairs = buildBoundedDenseGraphPairs(
+    participants,
+    maxDirectedChannels
+  );
+  const edges: MultilateralChannelEdge[] = [];
+  let createdCount = 0;
+
+  for (let index = 0; index < orderedPairs.length; index += 1) {
+    const [payer, payee] = orderedPairs[index];
+    const channelPda = findChannelPda(
+      program.programId,
+      payer.participantId,
+      payee.participantId,
+      tokenId
+    );
+    const existingAccount = await program.provider.connection.getAccountInfo(
+      channelPda
+    );
+    const channelPdaResolved = await ensureChannel(
+      program,
+      payer,
+      payee,
+      tokenId,
+      false
+    );
+    if (!existingAccount) {
+      createdCount += 1;
+    }
+    const channel = await fetchDirectionalChannelState(
+      program,
+      channelPdaResolved,
+      payer.participantId,
+      payee.participantId
+    );
+    edges.push({
+      payer,
+      payee,
+      channelPda: channelPdaResolved,
+      channel,
+    });
+
+    if (
+      index === orderedPairs.length - 1 ||
+      (index + 1) % 50 === 0 ||
+      index === 0
+    ) {
+      logStep(
+        `Prepared ${index + 1}/${
+          orderedPairs.length
+        } directed channels (${createdCount} created, ${
+          index + 1 - createdCount
+        } reused)`
+      );
+    }
+  }
+
+  return edges;
+}
+
 async function ensureChannel(
   program: Program<AgonProtocol>,
   payer: DemoWallet,
   payee: DemoWallet,
-  tokenId: number
+  tokenId: number,
+  logCreation = true
 ): Promise<PublicKey> {
   const channelPda = findChannelPda(
     program.programId,
@@ -2185,38 +4073,90 @@ async function ensureChannel(
     payee.participantId,
     tokenId
   );
-  try {
-    await program.account.channelState.fetch(channelPda);
-    return channelPda;
-  } catch {
-    const existingAccount = await program.provider.connection.getAccountInfo(
-      channelPda
-    );
-    if (existingAccount) {
-      throw new Error(
-        `Channel ${channelPda.toString()} for ${payer.name} -> ${
-          payee.name
-        } (token ${tokenId}) already exists on-chain but could not be decoded by the current program layout. Use a fresh wallet manifest or rotate participants before rerunning the demo.`
+  const { lowerParticipantId, higherParticipantId } =
+    getCanonicalChannelParticipants(payer.participantId, payee.participantId);
+  const existingAccount = await program.provider.connection.getAccountInfo(
+    channelPda,
+    "confirmed"
+  );
+  if (existingAccount) {
+    try {
+      const existingPairChannel = readRawChannelBucketState(
+        Buffer.isBuffer(existingAccount.data)
+          ? existingAccount.data
+          : Buffer.from(existingAccount.data),
+        payer.participantId,
+        payee.participantId
       );
+      if (existingPairChannel.tokenId !== tokenId) {
+        throw new Error(
+          `channel bucket token mismatch: expected ${tokenId}, got ${existingPairChannel.tokenId}`
+        );
+      }
+      const existingChannel = normalizeDirectionalChannelState(
+        existingPairChannel,
+        payer.participantId,
+        payee.participantId
+      );
+      if (existingChannel.initialized) {
+        return channelPda;
+      }
+    } catch (error) {
+      if (!isChannelBucketSlotNotInitializedError(error)) {
+        throw new Error(
+          `Channel ${channelPda.toString()} for ${payer.name} -> ${
+            payee.name
+          } (token ${tokenId}) already exists on-chain but could not be decoded by the current program layout: ${formatDecodeError(
+            error
+          )}. Use a fresh wallet manifest or rotate participants before rerunning the demo.`
+        );
+      }
     }
-    const signature = await program.methods
-      .createChannel(tokenId, null)
-      .accounts({
-        tokenRegistry: findTokenRegistryPda(program.programId),
-        payerAccount: payer.participantPda,
-        payeeAccount: payee.participantPda,
-        payeeOwner: payee.keypair.publicKey,
-        channelState: channelPda,
-        owner: payer.keypair.publicKey,
-        systemProgram: SystemProgram.programId,
-      } as any)
-      .signers([payer.keypair, payee.keypair])
-      .rpc();
+  }
+  const createChannelCall = program.methods
+    .createChannel(
+      tokenId,
+      lowerParticipantId,
+      higherParticipantId,
+      new anchor.BN(
+        channelBucketIdForPair(payer.participantId, payee.participantId)
+      ),
+      null as any
+    )
+    .accounts({
+      tokenRegistry: findTokenRegistryPda(program.programId),
+      payerBucket: payer.participantPda,
+      payeeBucket: payee.participantPda,
+      ownerIndexBucket: findOwnerIndexBucketPda(
+        program.programId,
+        payer.keypair.publicKey
+      ),
+      payeeOwner: payee.keypair.publicKey,
+      channelBucket: channelPda,
+      owner: payer.keypair.publicKey,
+      systemProgram: SystemProgram.programId,
+    } as any)
+    .signers([payer.keypair, payee.keypair]);
+  let signature: string;
+  try {
+    signature = await createChannelCall.rpc();
+  } catch (error) {
+    const recoveredSignature = await recoverTimedOutRpcSignature(
+      program.provider.connection,
+      error,
+      `Create channel ${payer.name} -> ${payee.name}`
+    );
+    if (!recoveredSignature) {
+      throw error;
+    }
+    signature = recoveredSignature;
+  }
+  if (logCreation) {
     logStep(
       `Created channel ${payer.name} -> ${payee.name} for token ${tokenId} (${signature})`
     );
-    return channelPda;
   }
+  return channelPda;
 }
 
 async function logScenarioEvents(
@@ -2249,7 +4189,12 @@ async function runSingleCommitmentScenario(
 ): Promise<ScenarioResult> {
   logSection("Scenario 1/5 - Latest Commitment Settlement");
   const channelPda = await ensureChannel(program, payer, payee, tokenId);
-  const channelBefore = await program.account.channelState.fetch(channelPda);
+  const channelBefore = await fetchDirectionalChannelState(
+    program,
+    channelPda,
+    payer.participantId,
+    payee.participantId
+  );
   const payerBefore = await fetchInternalBalance(program, payer, tokenId);
   const payeeBefore = await fetchInternalBalance(program, payee, tokenId);
   const rawAmount = toRawAmount(amountPerCommitment, decimals);
@@ -2286,12 +4231,16 @@ async function runSingleCommitmentScenario(
     .accounts({
       tokenRegistry: findTokenRegistryPda(program.programId),
       globalConfig: findGlobalConfigPda(program.programId),
-      payerAccount: payer.participantPda,
-      payeeAccount: payee.participantPda,
-      channelState: channelPda,
       submitter: payee.keypair.publicKey,
       instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
     } as any)
+    .remainingAccounts([
+      ...uniqueWritableMetasForPubkeys([
+        payer.participantPda,
+        payee.participantPda,
+      ]),
+      { pubkey: channelPda, isSigner: false, isWritable: true },
+    ])
     .preInstructions([ed25519Instruction])
     .signers([payee.keypair])
     .rpc();
@@ -2305,7 +4254,12 @@ async function runSingleCommitmentScenario(
     );
   }
 
-  const channelAfter = await program.account.channelState.fetch(channelPda);
+  const channelAfter = await fetchDirectionalChannelState(
+    program,
+    channelPda,
+    payer.participantId,
+    payee.participantId
+  );
   const payerAfter = await fetchInternalBalance(program, payer, tokenId);
   const payeeAfter = await fetchInternalBalance(program, payee, tokenId);
   logStep(
@@ -2365,7 +4319,7 @@ async function runSingleCommitmentScenario(
       signedMessageBytes: message.length,
       signatureCount: 1,
       participantBalanceWrites: 2,
-      channelStateWrites: 1,
+      channelLaneWrites: 1,
       notes: [
         "One latest cumulative commitment replaces exact-payment settlement on the hot path.",
       ],
@@ -2402,7 +4356,12 @@ async function runBatchCommitmentScenario(
   const channelsBefore = await Promise.all(
     selectedPayers.map(async (payer, index) => {
       const channelPda = await ensureChannel(program, payer, payee, tokenId);
-      const channel = await program.account.channelState.fetch(channelPda);
+      const channel = await fetchDirectionalChannelState(
+        program,
+        channelPda,
+        payer.participantId,
+        payee.participantId
+      );
       return {
         payer,
         channelPda,
@@ -2418,14 +4377,12 @@ async function runBatchCommitmentScenario(
     tokenId,
     tokenSymbol,
     payee,
-    inputs: channelsBefore.map(
-      ({ payer, channel, committedAmount }) => ({
-        payer,
-        payee,
-        committedAmount,
-        tokenId,
-      })
-    ),
+    inputs: channelsBefore.map(({ payer, channel, committedAmount }) => ({
+      payer,
+      payee,
+      committedAmount,
+      tokenId,
+    })),
   });
   const channelChunks: (typeof channelsBefore)[] = [];
   for (
@@ -2441,33 +4398,33 @@ async function runBatchCommitmentScenario(
   const signatures: string[] = [];
   for (let chunkIndex = 0; chunkIndex < channelChunks.length; chunkIndex += 1) {
     const chunk = channelChunks[chunkIndex];
-    const bundleEntries = chunk.map(
-      ({ payer, channel, committedAmount }) => ({
-        signer: payer.keypair,
-        message: createCommitmentMessage({
-          payerId: channel.payerId,
-          payeeId: channel.payeeId,
-          committedAmount,
-          tokenId,
-          messageDomain,
-        }),
-      })
-    );
+    const bundleEntries = chunk.map(({ payer, channel, committedAmount }) => ({
+      signer: payer.keypair,
+      message: createCommitmentMessage({
+        payerId: channel.payerId,
+        payeeId: channel.payeeId,
+        committedAmount,
+        tokenId,
+        messageDomain,
+      }),
+    }));
     const chunkSignature = await program.methods
       .settleCommitmentBundle(bundleEntries.length)
       .accounts({
         tokenRegistry: findTokenRegistryPda(program.programId),
         globalConfig: findGlobalConfigPda(program.programId),
-        payeeAccount: payee.participantPda,
         submitter: payee.keypair.publicKey,
         instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
       } as any)
-      .remainingAccounts(
-        chunk.flatMap(({ payer, channelPda }) => [
-          { pubkey: payer.participantPda, isSigner: false, isWritable: true },
-          { pubkey: channelPda, isSigner: false, isWritable: true },
-        ])
-      )
+      .remainingAccounts([
+        ...uniqueWritableMetasForPubkeys([
+          payee.participantPda,
+          ...chunk.map(({ payer }) => payer.participantPda),
+        ]),
+        ...uniqueWritableMetasForPubkeys(
+          chunk.map(({ channelPda }) => channelPda)
+        ),
+      ])
       .preInstructions([createMultiMessageEd25519Instruction(bundleEntries)])
       .signers([payee.keypair])
       .rpc();
@@ -2483,8 +4440,13 @@ async function runBatchCommitmentScenario(
 
   const totalAmount = rawAmount * totalUnderlyingPayments;
   const channelsAfter = await Promise.all(
-    channelsBefore.map(async ({ channelPda }) =>
-      program.account.channelState.fetch(channelPda)
+    channelsBefore.map(async ({ payer, channelPda }) =>
+      fetchDirectionalChannelState(
+        program,
+        channelPda,
+        payer.participantId,
+        payee.participantId
+      )
     )
   );
   const payerBalancesAfter = await Promise.all(
@@ -2584,518 +4546,9 @@ async function runBatchCommitmentScenario(
       ),
       signatureCount: channelsBefore.length,
       participantBalanceWrites: selectedPayers.length + 1,
-      channelStateWrites: channelsBefore.length,
+      channelLaneWrites: channelsBefore.length,
       notes: [
         "Many unilateral latest commitments settle in payee-side bundle transactions.",
-      ],
-    }),
-  };
-}
-
-async function runUnilateralClearingScenario(
-  provider: anchor.AnchorProvider,
-  program: Program<AgonProtocol>,
-  messageDomain: Buffer,
-  tokenId: number,
-  tokenSymbol: string,
-  decimals: number,
-  payer: DemoWallet,
-  payeeA: DemoWallet,
-  payeeB: DemoWallet,
-  payeeACommitmentCount: number,
-  payeeBCommitmentCount: number,
-  amountPerCommitment: number,
-  requestedLockAmount: number
-): Promise<ScenarioResult> {
-  logSection("Scenario 3/5 - Clearing Round (Single Payer)");
-  const channelA = await ensureChannel(program, payer, payeeA, tokenId);
-  const channelB = await ensureChannel(program, payer, payeeB, tokenId);
-  const channelABefore = await program.account.channelState.fetch(channelA);
-  const channelBBefore = await program.account.channelState.fetch(channelB);
-  const rawAmountPerCommitment = toRawAmount(amountPerCommitment, decimals);
-  const settleAAmount = rawAmountPerCommitment * payeeACommitmentCount;
-  const settleBAmount = rawAmountPerCommitment * payeeBCommitmentCount;
-  const lockAmount = Math.min(
-    toRawAmount(requestedLockAmount, decimals),
-    settleAAmount
-  );
-  const payerBefore = await fetchInternalBalance(program, payer, tokenId);
-  const payeeABefore = await fetchInternalBalance(program, payeeA, tokenId);
-  const payeeBBefore = await fetchInternalBalance(program, payeeB, tokenId);
-  const lockSignature = await program.methods
-    .lockChannelFunds(tokenId, new anchor.BN(lockAmount))
-    .accounts({
-      tokenRegistry: findTokenRegistryPda(program.programId),
-      payerAccount: payer.participantPda,
-      payeeAccount: payeeA.participantPda,
-      channelState: channelA,
-      owner: payer.keypair.publicKey,
-      systemProgram: SystemProgram.programId,
-    } as any)
-    .signers([payer.keypair])
-    .rpc();
-  logStep(
-    `Locked ${formatAmount(lockAmount, decimals)} for ${payer.name} -> ${
-      payeeA.name
-    } (${lockSignature})`
-  );
-  const signedCommitmentPreview = buildSignedCommitmentPreview({
-    messageDomain,
-    decimals,
-    tokenSymbol,
-    inputs: [
-      {
-        payer,
-        payee: payeeA,
-        committedAmount:
-          channelABefore.settledCumulative.toNumber() + rawAmountPerCommitment,
-        tokenId,
-      },
-      {
-        payer,
-        payee: payeeA,
-        committedAmount:
-          channelABefore.settledCumulative.toNumber() +
-          rawAmountPerCommitment * Math.min(2, payeeACommitmentCount),
-        tokenId,
-      },
-      {
-        payer,
-        payee: payeeB,
-        committedAmount:
-          channelBBefore.settledCumulative.toNumber() + rawAmountPerCommitment,
-        tokenId,
-      },
-      {
-        payer,
-        payee: payeeB,
-        committedAmount:
-          channelBBefore.settledCumulative.toNumber() +
-          rawAmountPerCommitment * Math.min(2, payeeBCommitmentCount),
-        tokenId,
-      },
-    ].slice(
-      0,
-      Math.min(
-        SIGNED_COMMITMENT_PREVIEW_COUNT,
-        (payeeACommitmentCount > 1 ? 2 : 1) +
-          (payeeBCommitmentCount > 1 ? 2 : 1)
-      )
-    ),
-  });
-  const roundBlocks: ClearingRoundPreviewBlockInput[] = [
-    {
-      participant: payer,
-      entries: [
-        {
-          payeeRef: 1,
-          payee: payeeA,
-          targetCumulative:
-            channelABefore.settledCumulative.toNumber() + settleAAmount,
-        },
-        {
-          payeeRef: 2,
-          payee: payeeB,
-          targetCumulative:
-            channelBBefore.settledCumulative.toNumber() + settleBAmount,
-        },
-      ],
-    },
-    {
-      participant: payeeA,
-      entries: [],
-    },
-    {
-      participant: payeeB,
-      entries: [],
-    },
-  ];
-  const clearingRoundPreview = buildClearingRoundPayloadPreview({
-    messageDomain,
-    tokenId,
-    tokenSymbol,
-    decimals,
-    blocks: roundBlocks,
-  });
-  const message = createClearingRoundMessage({
-    tokenId,
-    messageDomain,
-    blocks: roundBlocks.map((block) => ({
-      participantId: block.participant.participantId,
-      entries: block.entries.map((entry) => ({
-        payeeRef: entry.payeeRef,
-        targetCumulative: entry.targetCumulative,
-      })),
-    })),
-  });
-  const ed25519Instruction = createMultiSigEd25519Instruction(
-    [payer.keypair, payeeA.keypair, payeeB.keypair],
-    message
-  );
-  const signature = await program.methods
-    .settleClearingRound()
-    .accounts({
-      tokenRegistry: findTokenRegistryPda(program.programId),
-      globalConfig: findGlobalConfigPda(program.programId),
-      submitter: payer.keypair.publicKey,
-      instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
-    } as any)
-    .remainingAccounts([
-      { pubkey: payer.participantPda, isSigner: false, isWritable: true },
-      { pubkey: payeeA.participantPda, isSigner: false, isWritable: true },
-      { pubkey: payeeB.participantPda, isSigner: false, isWritable: true },
-      { pubkey: channelA, isSigner: false, isWritable: true },
-      { pubkey: channelB, isSigner: false, isWritable: true },
-    ])
-    .preInstructions([ed25519Instruction])
-    .signers([payer.keypair])
-    .rpc();
-  const serializedTransactionBytes = await Promise.all([
-    fetchSerializedTransactionBytes(provider.connection, lockSignature),
-    fetchSerializedTransactionBytes(provider.connection, signature),
-  ]);
-  const channelAAfter = await program.account.channelState.fetch(channelA);
-  const channelBAfter = await program.account.channelState.fetch(channelB);
-  const payerAfter = await fetchInternalBalance(program, payer, tokenId);
-  const payeeAAfter = await fetchInternalBalance(program, payeeA, tokenId);
-  const payeeBAfter = await fetchInternalBalance(program, payeeB, tokenId);
-  logStep(
-    `${payer.name} cleared ${(
-      payeeACommitmentCount + payeeBCommitmentCount
-    ).toLocaleString(
-      "en-US"
-    )} underlying micropayments across 2 unilateral channels totaling ${formatAmount(
-      settleAAmount + settleBAmount,
-      decimals
-    )} at ${formatAmount(rawAmountPerCommitment, decimals)} each`
-  );
-  logSignedCommitmentPreview(signedCommitmentPreview);
-  logClearingRoundPayloadPreview(clearingRoundPreview);
-  logSavingsComparison(
-    payeeACommitmentCount + payeeBCommitmentCount,
-    2,
-    "1 lock + 1 single-payer clearing round"
-  );
-  logStep(
-    `  ${payeeA.name} internal: ${formatAmount(
-      payeeABefore.available,
-      decimals
-    )} -> ${formatAmount(payeeAAfter.available, decimals)}`
-  );
-  logStep(
-    `  ${payeeB.name} internal: ${formatAmount(
-      payeeBBefore.available,
-      decimals
-    )} -> ${formatAmount(payeeBAfter.available, decimals)}`
-  );
-  logStep(
-    `  ${payer.name} internal: ${formatAmount(
-      payerBefore.available,
-      decimals
-    )} -> ${formatAmount(payerAfter.available, decimals)}`
-  );
-  logStep(
-    `  Channel ${payer.name}->${payeeA.name}: locked ${formatAmount(
-      channelABefore.lockedBalance.toNumber(),
-      decimals
-    )} -> ${formatAmount(
-      channelAAfter.lockedBalance.toNumber(),
-      decimals
-    )}, settled cumulative ${formatAmount(
-      channelABefore.settledCumulative.toNumber(),
-      decimals
-    )} -> ${formatAmount(channelAAfter.settledCumulative.toNumber(), decimals)}`
-  );
-  logStep(
-    `  Channel ${payer.name}->${payeeB.name}: settled cumulative ${formatAmount(
-      channelBBefore.settledCumulative.toNumber(),
-      decimals
-    )} -> ${formatAmount(channelBAfter.settledCumulative.toNumber(), decimals)}`
-  );
-  logStep(`  Explorer: ${explorerUrl(signature)}`);
-  await logScenarioEvents(provider, program, signature);
-  return {
-    primarySignature: signature,
-    benchmark: createBenchmarkScenario({
-      id: "unilateralClearing",
-      title: "Scenario 3/5 - Clearing Round (Single Payer)",
-      settlementMode: "single-payer-clearing",
-      participantCount: 3,
-      channelCount: 2,
-      underlyingPaymentCount:
-        payeeACommitmentCount + payeeBCommitmentCount,
-      grossValueRaw: settleAAmount + settleBAmount,
-      decimals,
-      tokenSymbol,
-      signatures: [lockSignature, signature],
-      serializedTransactionBytes,
-      signedMessageBytes: message.length,
-      signatureCount: 3,
-      participantBalanceWrites: 4,
-      channelStateWrites: 3,
-      notes: [
-        "One collateral lock plus one cooperative clearing round settles two unilateral lanes.",
-      ],
-    }),
-  };
-}
-
-async function runBilateralClearingScenario(
-  provider: anchor.AnchorProvider,
-  program: Program<AgonProtocol>,
-  messageDomain: Buffer,
-  tokenId: number,
-  tokenSymbol: string,
-  decimals: number,
-  participantA: DemoWallet,
-  participantB: DemoWallet,
-  forwardCommitmentCount: number,
-  reverseCommitmentCount: number,
-  amountPerCommitment: number
-): Promise<ScenarioResult> {
-  logSection("Scenario 4/5 - Clearing Round (Bilateral)");
-  const channelAB = await ensureChannel(
-    program,
-    participantA,
-    participantB,
-    tokenId
-  );
-  const channelBA = await ensureChannel(
-    program,
-    participantB,
-    participantA,
-    tokenId
-  );
-  const currentAB = await program.account.channelState.fetch(channelAB);
-  const currentBA = await program.account.channelState.fetch(channelBA);
-  const beforeA = await fetchInternalBalance(program, participantA, tokenId);
-  const beforeB = await fetchInternalBalance(program, participantB, tokenId);
-  const rawAmountPerCommitment = toRawAmount(amountPerCommitment, decimals);
-  const grossAToB = rawAmountPerCommitment * forwardCommitmentCount;
-  const grossBToA = rawAmountPerCommitment * reverseCommitmentCount;
-  const netAdjustment = Math.abs(grossAToB - grossBToA);
-  const bilateralPreviewInputs: SignedCommitmentPreviewInput[] = [
-    {
-      payer: participantA,
-      payee: participantB,
-      committedAmount:
-        currentAB.settledCumulative.toNumber() + rawAmountPerCommitment,
-      tokenId,
-    },
-  ];
-  if (
-    forwardCommitmentCount > 1 &&
-    bilateralPreviewInputs.length < SIGNED_COMMITMENT_PREVIEW_COUNT
-  ) {
-    bilateralPreviewInputs.push({
-      payer: participantA,
-      payee: participantB,
-      committedAmount:
-        currentAB.settledCumulative.toNumber() + rawAmountPerCommitment * 2,
-      tokenId,
-    });
-  }
-  if (bilateralPreviewInputs.length < SIGNED_COMMITMENT_PREVIEW_COUNT) {
-    bilateralPreviewInputs.push({
-      payer: participantB,
-      payee: participantA,
-      committedAmount:
-        currentBA.settledCumulative.toNumber() + rawAmountPerCommitment,
-      tokenId,
-    });
-  }
-  if (
-    reverseCommitmentCount > 1 &&
-    bilateralPreviewInputs.length < SIGNED_COMMITMENT_PREVIEW_COUNT
-  ) {
-    bilateralPreviewInputs.push({
-      payer: participantB,
-      payee: participantA,
-      committedAmount:
-        currentBA.settledCumulative.toNumber() + rawAmountPerCommitment * 2,
-      tokenId,
-    });
-  }
-  const signedCommitmentPreview = buildSignedCommitmentPreview({
-    messageDomain,
-    decimals,
-    tokenSymbol,
-    inputs: bilateralPreviewInputs,
-  });
-  const roundBlocks: ClearingRoundPreviewBlockInput[] = [
-    {
-      participant: participantA,
-      entries: [
-        {
-          payeeRef: 1,
-          payee: participantB,
-          targetCumulative: currentAB.settledCumulative.toNumber() + grossAToB,
-        },
-      ],
-    },
-    {
-      participant: participantB,
-      entries: [
-        {
-          payeeRef: 0,
-          payee: participantA,
-          targetCumulative: currentBA.settledCumulative.toNumber() + grossBToA,
-        },
-      ],
-    },
-  ];
-  const clearingRoundPreview = buildClearingRoundPayloadPreview({
-    messageDomain,
-    tokenId,
-    tokenSymbol,
-    decimals,
-    blocks: roundBlocks,
-  });
-  const message = createClearingRoundMessage({
-    tokenId,
-    messageDomain,
-    blocks: roundBlocks.map((block) => ({
-      participantId: block.participant.participantId,
-      entries: block.entries.map((entry) => ({
-        payeeRef: entry.payeeRef,
-        targetCumulative: entry.targetCumulative,
-      })),
-    })),
-  });
-  const signature = await program.methods
-    .settleClearingRound()
-    .accounts({
-      tokenRegistry: findTokenRegistryPda(program.programId),
-      globalConfig: findGlobalConfigPda(program.programId),
-      submitter: participantA.keypair.publicKey,
-      instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
-    } as any)
-    .remainingAccounts([
-      {
-        pubkey: participantA.participantPda,
-        isSigner: false,
-        isWritable: true,
-      },
-      {
-        pubkey: participantB.participantPda,
-        isSigner: false,
-        isWritable: true,
-      },
-      { pubkey: channelAB, isSigner: false, isWritable: true },
-      { pubkey: channelBA, isSigner: false, isWritable: true },
-    ])
-    .preInstructions([
-      createMultiSigEd25519Instruction(
-        [participantA.keypair, participantB.keypair],
-        message
-      ),
-    ])
-    .signers([participantA.keypair])
-    .rpc();
-  const serializedTxBytes = await fetchSerializedTransactionBytes(
-    provider.connection,
-    signature
-  );
-  const afterA = await fetchInternalBalance(program, participantA, tokenId);
-  const afterB = await fetchInternalBalance(program, participantB, tokenId);
-  const afterChannelAB = await program.account.channelState.fetch(channelAB);
-  const afterChannelBA = await program.account.channelState.fetch(channelBA);
-  logStep(
-    `Gross obligations: ${participantA.name} -> ${
-      participantB.name
-    } ${formatAmount(
-      grossAToB,
-      decimals
-    )} across ${forwardCommitmentCount.toLocaleString(
-      "en-US"
-    )} underlying micropayments, ${participantB.name} -> ${
-      participantA.name
-    } ${formatAmount(
-      grossBToA,
-      decimals
-    )} across ${reverseCommitmentCount.toLocaleString(
-      "en-US"
-    )} underlying micropayments`
-  );
-  if (netAdjustment === 0) {
-    logStep("Net adjustment: none");
-  } else if (grossAToB > grossBToA) {
-    logStep(
-      `Net adjustment: ${participantA.name} -> ${
-        participantB.name
-      } ${formatAmount(netAdjustment, decimals)}`
-    );
-  } else {
-    logStep(
-      `Net adjustment: ${participantB.name} -> ${
-        participantA.name
-      } ${formatAmount(netAdjustment, decimals)}`
-    );
-  }
-  logSignedCommitmentPreview(signedCommitmentPreview);
-  logClearingRoundPayloadPreview(clearingRoundPreview);
-  logSavingsComparison(
-    forwardCommitmentCount + reverseCommitmentCount,
-    1,
-    "1 bilateral clearing round"
-  );
-  logStep(
-    `  ${participantA.name} internal: ${formatAmount(
-      beforeA.available,
-      decimals
-    )} -> ${formatAmount(afterA.available, decimals)}`
-  );
-  logStep(
-    `  ${participantB.name} internal: ${formatAmount(
-      beforeB.available,
-      decimals
-    )} -> ${formatAmount(afterB.available, decimals)}`
-  );
-  logStep(
-    `  Channel ${participantA.name}->${
-      participantB.name
-    }: settled cumulative ${formatAmount(
-      currentAB.settledCumulative.toNumber(),
-      decimals
-    )} -> ${formatAmount(
-      afterChannelAB.settledCumulative.toNumber(),
-      decimals
-    )}`
-  );
-  logStep(
-    `  Channel ${participantB.name}->${
-      participantA.name
-    }: settled cumulative ${formatAmount(
-      currentBA.settledCumulative.toNumber(),
-      decimals
-    )} -> ${formatAmount(
-      afterChannelBA.settledCumulative.toNumber(),
-      decimals
-    )}`
-  );
-  logStep(`  Explorer: ${explorerUrl(signature)}`);
-  await logScenarioEvents(provider, program, signature);
-  return {
-    primarySignature: signature,
-    benchmark: createBenchmarkScenario({
-      id: "bilateralClearing",
-      title: "Scenario 4/5 - Clearing Round (Bilateral)",
-      settlementMode: "bilateral-clearing",
-      participantCount: 2,
-      channelCount: 2,
-      underlyingPaymentCount:
-        forwardCommitmentCount + reverseCommitmentCount,
-      grossValueRaw: grossAToB + grossBToA,
-      decimals,
-      tokenSymbol,
-      signatures: [signature],
-      serializedTransactionBytes: [serializedTxBytes],
-      signedMessageBytes: message.length,
-      signatureCount: 2,
-      participantBalanceWrites: 2,
-      channelStateWrites: 2,
-      notes: [
-        "Two-way obligations collapse to one cooperative round and only residual net balance changes.",
       ],
     }),
   };
@@ -3111,7 +4564,9 @@ async function runMultilateralClearingScenario(
   participants: DemoWallet[],
   channelCount: number,
   edgeCommitmentCount: number,
-  amountPerCommitment: number
+  amountPerCommitment: number,
+  scenarioId: string,
+  scenarioTitle: string
 ): Promise<MultilateralScenarioResult> {
   if (participants.length < 3) {
     throw new Error("Multilateral clearing requires at least 3 participants");
@@ -3122,7 +4577,7 @@ async function runMultilateralClearingScenario(
     );
   }
 
-  logSection("Scenario 5/5 - Clearing Round (Largest Executable v0 + ALT)");
+  logSection(scenarioTitle);
   const orderedPairs = buildOrderedParticipantPairs(participants);
   if (channelCount > orderedPairs.length) {
     throw new Error(
@@ -3139,14 +4594,12 @@ async function runMultilateralClearingScenario(
     { length: channelCount - participants.length + 1 },
     (_, index) => channelCount - index
   );
-  let channelEdges:
-    | Array<{
-        payer: DemoWallet;
-        payee: DemoWallet;
-        channelPda: PublicKey;
-        channel: any;
-      }>
-    | null = null;
+  let channelEdges: Array<{
+    payer: DemoWallet;
+    payee: DemoWallet;
+    channelPda: PublicKey;
+    channel: any;
+  }> | null = null;
   let roundBlocks: ClearingRoundPreviewBlockInput[] | null = null;
   let clearingRoundPreview: ClearingRoundPayloadPreview | null = null;
   let actualV0AltTxBytes: number | null = null;
@@ -3165,7 +4618,9 @@ async function runMultilateralClearingScenario(
   const grossAmount = rawAmountPerCommitment * edgeCommitmentCount;
   if (!sponsor.publicKey.equals(submitter.keypair.publicKey)) {
     logStep(
-      `Using ${sponsor.publicKey.toString()} as the fee sponsor for the multilateral round while ${submitter.name} remains the signed submitter`
+      `Using ${sponsor.publicKey.toString()} as the fee sponsor for the multilateral round while ${
+        submitter.name
+      } remains the signed submitter`
     );
   }
 
@@ -3174,7 +4629,12 @@ async function runMultilateralClearingScenario(
     const candidateChannelEdges = await Promise.all(
       selectedPairs.map(async ([payer, payee]) => {
         const channelPda = await ensureChannel(program, payer, payee, tokenId);
-        const channel = await program.account.channelState.fetch(channelPda);
+        const channel = await fetchDirectionalChannelState(
+          program,
+          channelPda,
+          payer.participantId,
+          payee.participantId
+        );
         return {
           payer,
           payee,
@@ -3200,9 +4660,42 @@ async function runMultilateralClearingScenario(
               edge.channel.settledCumulative.toNumber() + grossAmount,
           })),
       }));
+    const minimumRawByParticipantId = new Map<number, number>();
+    for (const block of candidateRoundBlocks) {
+      const requiredRaw = block.entries.reduce((sum, entry) => {
+        const edge = candidateChannelEdges.find(
+          (candidate) =>
+            candidate.payer.participantId === block.participant.participantId &&
+            candidate.payee.participantId ===
+              participants[entry.payeeRef]?.participantId
+        );
+        if (!edge) {
+          throw new Error("Unable to resolve clearing-round liquidity target");
+        }
+        const delta =
+          entry.targetCumulative - edge.channel.settledCumulative.toNumber();
+        const uncoveredDelta =
+          delta - Math.min(edge.channel.lockedBalance.toNumber(), delta);
+        return sum + uncoveredDelta;
+      }, 0);
+      minimumRawByParticipantId.set(
+        block.participant.participantId,
+        requiredRaw
+      );
+    }
+    await ensureMinimumInternalBalances(
+      program,
+      participants,
+      tokenId,
+      tokenSymbol,
+      decimals,
+      findVaultTokenAccountPda(program.programId, tokenId),
+      minimumRawByParticipantId
+    );
     const message = createClearingRoundMessage({
       tokenId,
       messageDomain,
+      version: BLS_CLEARING_ROUND_MESSAGE_VERSION,
       blocks: candidateRoundBlocks.map((block) => ({
         participantId: block.participant.participantId,
         entries: block.entries.map((entry) => ({
@@ -3211,37 +4704,35 @@ async function runMultilateralClearingScenario(
         })),
       })),
     });
-    const roundSigners = participants.map((participant) => participant.keypair);
-    const ed25519Instruction = createMultiSigEd25519Instruction(
-      roundSigners,
-      message
+    const aggregateSignatureCompressed = aggregateBlsSignatures(
+      participants.map((participant) => signBlsMessage(participant, message))
     );
-    const participantAccounts = participants.map((participant) => ({
-      pubkey: participant.participantPda,
-      isSigner: false,
-      isWritable: true,
-    }));
-    const channelAccounts = candidateRoundBlocks.flatMap((block) =>
-      block.entries.map((entry) => {
-        const edge = candidateChannelEdges.find(
-          (candidate) =>
-            candidate.payer.participantId === block.participant.participantId &&
-            candidate.payee.participantId ===
-              participants[entry.payeeRef]?.participantId
-        );
-        if (!edge) {
-          throw new Error("Unable to resolve clearing-round channel account");
-        }
-        return {
-          pubkey: edge.channelPda,
-          isSigner: false,
-          isWritable: true,
-        };
-      })
+    const participantBucketAccounts = uniqueWritableMetasForPubkeys(
+      participants.map((participant) => participant.participantPda)
     );
-    const remainingAccounts = [...participantAccounts, ...channelAccounts];
+    const channelBucketAccounts = uniqueWritableMetasForPubkeys(
+      candidateRoundBlocks.flatMap((block) =>
+        block.entries.map((entry) => {
+          const edge = candidateChannelEdges.find(
+            (candidate) =>
+              candidate.payer.participantId ===
+                block.participant.participantId &&
+              candidate.payee.participantId ===
+                participants[entry.payeeRef]?.participantId
+          );
+          if (!edge) {
+            throw new Error("Unable to resolve clearing-round channel account");
+          }
+          return edge.channelPda;
+        })
+      )
+    );
+    const remainingAccounts = [
+      ...participantBucketAccounts,
+      ...channelBucketAccounts,
+    ];
     const clearingRoundInstruction = await program.methods
-      .settleClearingRound()
+      .settleClearingRound(message, [...aggregateSignatureCompressed])
       .accounts({
         tokenRegistry: findTokenRegistryPda(program.programId),
         globalConfig: findGlobalConfigPda(program.programId),
@@ -3258,8 +4749,10 @@ async function runMultilateralClearingScenario(
         findTokenRegistryPda(program.programId),
         findGlobalConfigPda(program.programId),
         SYSVAR_INSTRUCTIONS_PUBKEY,
-        ...participants.map((participant) => participant.participantPda),
-        ...candidateChannelEdges.map((edge) => edge.channelPda),
+        ...uniquePubkeys([
+          ...participants.map((participant) => participant.participantPda),
+          ...candidateChannelEdges.map((edge) => edge.channelPda),
+        ]),
       ]
     );
 
@@ -3267,14 +4760,14 @@ async function runMultilateralClearingScenario(
       const candidateTxBytes = await estimateVersionedTransactionBytes({
         connection: provider.connection,
         feePayer: sponsor,
-        instructions: [ed25519Instruction, clearingRoundInstruction],
+        instructions: [clearingRoundInstruction],
         lookupTables: [lookupTable],
         extraSigners,
       });
       const candidateSignature = await sendVersionedTransaction({
         connection: provider.connection,
         feePayer: sponsor,
-        instructions: [ed25519Instruction, clearingRoundInstruction],
+        instructions: [clearingRoundInstruction],
         lookupTables: [lookupTable],
         extraSigners,
       });
@@ -3287,6 +4780,8 @@ async function runMultilateralClearingScenario(
         tokenSymbol,
         decimals,
         blocks: candidateRoundBlocks,
+        version: BLS_CLEARING_ROUND_MESSAGE_VERSION,
+        aggregateSignature: aggregateSignatureCompressed,
       });
       actualV0AltTxBytes = candidateTxBytes;
       signature = candidateSignature;
@@ -3336,7 +4831,12 @@ async function runMultilateralClearingScenario(
   const channelEdgesAfter = await Promise.all(
     channelEdges.map(async (edge) => ({
       ...edge,
-      afterChannel: await program.account.channelState.fetch(edge.channelPda),
+      afterChannel: await fetchDirectionalChannelState(
+        program,
+        edge.channelPda,
+        edge.payer.participantId,
+        edge.payee.participantId
+      ),
     }))
   );
   const incomingByPayee = new Map<
@@ -3375,7 +4875,9 @@ async function runMultilateralClearingScenario(
   logStep(
     `Flagship multilateral clearing example: ${edgeCommitmentCount.toLocaleString(
       "en-US"
-    )} offchain micropayments on each of ${channelEdges.length} directed channels, ${totalUnderlyingCommitments.toLocaleString(
+    )} offchain micropayments on each of ${
+      channelEdges.length
+    } directed channels, ${totalUnderlyingCommitments.toLocaleString(
       "en-US"
     )} total`
   );
@@ -3392,22 +4894,31 @@ async function runMultilateralClearingScenario(
     )} each`
   );
   logStep(
-    `Equivalent bundle-settlement baseline: ${channelEdges.length} latest commitments grouped into ${equivalentBundleTxCount} payee-side bundle tx${
+    `Equivalent bundle-settlement baseline: ${
+      channelEdges.length
+    } latest commitments grouped into ${equivalentBundleTxCount} payee-side bundle tx${
       equivalentBundleTxCount === 1 ? "" : "s"
-    }, ${batchSettlementParticipantWrites} participant balance writes, ${channelEdges.length} channel-state updates`
+    }, ${batchSettlementParticipantWrites} participant balance writes, ${
+      channelEdges.length
+    } channel-state updates`
   );
   logStep(
-    `Multilateral compression vs bundle settlement: ${formatCompressionRatio(
+    `BLS multilateral compression vs bundle settlement: ${formatCompressionRatio(
       equivalentBundleTxCount
     )}x fewer settlement txs (${equivalentBundleTxCount} -> 1), ${formatCompressionRatio(
-      channelEdges.length / participants.length
+      channelEdges.length
     )}x fewer signed payloads at final settlement (${
       channelEdges.length
-    } -> ${participants.length}), ${
+    } -> 1 aggregate signature), ${formatCompressionRatio(
+      participants.length
+    )}x signer-envelope compression (${
+      participants.length
+    } participant signatures -> 1 aggregate signature), ${
       multilateralParticipantBalanceWrites === 0
         ? `participant balance writes eliminated (${batchSettlementParticipantWrites} -> 0)`
         : `${formatCompressionRatio(
-            batchSettlementParticipantWrites / multilateralParticipantBalanceWrites
+            batchSettlementParticipantWrites /
+              multilateralParticipantBalanceWrites
           )}x fewer participant balance writes (${batchSettlementParticipantWrites} -> ${multilateralParticipantBalanceWrites})`
     }`
   );
@@ -3421,10 +4932,10 @@ async function runMultilateralClearingScenario(
     `Result: balances stay flat while all ${channelEdges.length} unilateral channels advance to their latest cumulative commitments`
   );
   logStep(
-    `${participants.length}-agent graph compressed into 1 signed multilateral clearing round`
+    `${participants.length}-agent graph compressed into 1 BLS-signed multilateral clearing round`
   );
   logStep(
-    `  Actual serialized tx size (v0 + ALT, self-funded): ${actualV0AltTxBytes}/${LEGACY_PACKET_DATA_SIZE} bytes`
+    `  Actual serialized tx size (BLS v0 + ALT, self-funded): ${actualV0AltTxBytes}/${LEGACY_PACKET_DATA_SIZE} bytes`
   );
   logSignedCommitmentPreview(signedCommitmentPreview);
   logClearingRoundPayloadPreview(clearingRoundPreview);
@@ -3473,8 +4984,8 @@ async function runMultilateralClearingScenario(
   return {
     primarySignature: signature,
     benchmark: createBenchmarkScenario({
-      id: "multilateralClearing",
-      title: "Scenario 5/5 - Clearing Round (Largest Executable v0 + ALT)",
+      id: scenarioId,
+      title: scenarioTitle,
       settlementMode: "multilateral-clearing",
       participantCount: participants.length,
       channelCount: channelEdges.length,
@@ -3487,6 +4998,7 @@ async function runMultilateralClearingScenario(
       signedMessageBytes: createClearingRoundMessage({
         tokenId,
         messageDomain,
+        version: BLS_CLEARING_ROUND_MESSAGE_VERSION,
         blocks: roundBlocks.map((block) => ({
           participantId: block.participant.participantId,
           entries: block.entries.map((entry) => ({
@@ -3495,13 +5007,14 @@ async function runMultilateralClearingScenario(
           })),
         })),
       }).length,
-      signatureCount: participants.length,
+      signatureCount: 1,
       participantBalanceWrites: multilateralParticipantBalanceWrites,
-      channelStateWrites: channelEdges.length,
+      channelLaneWrites: channelEdges.length,
       requestedShape,
       achievedShape,
       notes: [
-        "Current multilateral rounds still pay per-channel state writes, but they compress settlement transactions and signed payloads.",
+        `BLS aggregated ${participants.length} participant cosignatures into one on-chain signature envelope.`,
+        "Channel-state writes still scale with included channels, so BLS mostly expands the byte budget rather than removing per-channel work.",
       ],
     }),
     settledChannelCount: channelEdges.length,
@@ -3516,9 +5029,11 @@ async function runLargestExecutableMultilateralScenario(
   tokenSymbol: string,
   decimals: number,
   participants: DemoWallet[],
-  targets: MultilateralSearchTarget,
+  target: BenchmarkShape,
   edgeCommitmentCount: number,
-  amountPerCommitment: number
+  amountPerCommitment: number,
+  scenarioId: string,
+  scenarioTitle: string
 ): Promise<MultilateralScenarioResult> {
   if (participants.length < 3) {
     throw new Error("At least three funded participants are required");
@@ -3544,27 +5059,34 @@ async function runLargestExecutableMultilateralScenario(
     }
   };
 
-  pushCandidate(targets.overall);
-  pushCandidate(targets.balanced);
+  const cappedTarget: BenchmarkShape = {
+    participantCount: Math.min(target.participantCount, participants.length),
+    channelCount: Math.min(
+      target.channelCount,
+      Math.min(target.participantCount, participants.length) *
+        (Math.min(target.participantCount, participants.length) - 1)
+    ),
+  };
+  pushCandidate(cappedTarget);
   for (
-    let participantCount = Math.min(
-      targets.overall.participantCount,
-      participants.length
-    );
+    let channelCandidate = cappedTarget.channelCount - 1;
+    channelCandidate >= cappedTarget.participantCount;
+    channelCandidate -= 1
+  ) {
+    pushCandidate({
+      participantCount: cappedTarget.participantCount,
+      channelCount: channelCandidate,
+    });
+  }
+  for (
+    let participantCount = cappedTarget.participantCount - 1;
     participantCount >= 3;
     participantCount -= 1
   ) {
     pushCandidate({
       participantCount,
       channelCount: Math.min(
-        targets.overall.channelCount,
-        participantCount * (participantCount - 1)
-      ),
-    });
-    pushCandidate({
-      participantCount,
-      channelCount: Math.min(
-        targets.balanced.channelCount,
+        cappedTarget.channelCount,
         participantCount * (participantCount - 1)
       ),
     });
@@ -3583,7 +5105,9 @@ async function runLargestExecutableMultilateralScenario(
         participants.slice(0, shape.participantCount),
         shape.channelCount,
         edgeCommitmentCount,
-        amountPerCommitment
+        amountPerCommitment,
+        scenarioId,
+        scenarioTitle
       );
     } catch (error) {
       lastError = error;
@@ -3593,6 +5117,1167 @@ async function runLargestExecutableMultilateralScenario(
   throw lastError instanceof Error
     ? lastError
     : new Error("Unable to find an executable multilateral clearing shape");
+}
+
+async function prepareMultilateralSearchContext(
+  provider: anchor.AnchorProvider,
+  program: Program<AgonProtocol>,
+  messageDomain: Buffer,
+  tokenId: number,
+  tokenSymbol: string,
+  decimals: number,
+  wallets: DemoWallet[],
+  vaultTokenAccount: PublicKey,
+  options: CliOptions,
+  runId: string
+): Promise<MultilateralSearchContext> {
+  await ensureTargetInternalBalances(
+    program,
+    wallets,
+    tokenId,
+    tokenSymbol,
+    decimals,
+    vaultTokenAccount,
+    options.blsInternalBalanceTarget
+  );
+
+  const completeGraphEdges = await ensureDenseGraphChannels(
+    program,
+    wallets,
+    tokenId,
+    options.blsMaxDenseChannels
+  );
+  const providerPayer = (provider.wallet as any).payer as Keypair | undefined;
+  const sponsor = await selectFeeSponsor(provider.connection, [
+    ...(providerPayer ? [providerPayer] : []),
+    ...wallets.map((wallet) => wallet.keypair),
+  ]);
+  const submitter = wallets[0];
+  const extraSigners = sponsor.publicKey.equals(submitter.keypair.publicKey)
+    ? []
+    : [submitter.keypair];
+
+  const lookupTables = await createLookupTablesForAddresses(
+    provider.connection,
+    submitter.keypair,
+    sponsor,
+    [
+      findTokenRegistryPda(program.programId),
+      findGlobalConfigPda(program.programId),
+      SYSVAR_INSTRUCTIONS_PUBKEY,
+      ...wallets.map((wallet) => wallet.participantPda),
+      ...completeGraphEdges.map((edge) => edge.channelPda),
+    ]
+  );
+
+  logSection("BLS Search Setup");
+  logStep(
+    `Prepared ${wallets.length} participants, ${
+      completeGraphEdges.length
+    } directed channels (cap ${options.blsMaxDenseChannels}), and ${
+      lookupTables.length
+    } lookup table${lookupTables.length === 1 ? "" : "s"} for the BLS search`
+  );
+  logStep(
+    `BLS search results log: ${resolveInputPath(
+      process.cwd(),
+      options.blsSearchResultsLogPath
+    )}`
+  );
+
+  return {
+    fullParticipants: wallets,
+    completeGraphEdges,
+    lookupTables,
+    sponsor,
+    extraSigners,
+    decimals,
+    tokenId,
+    tokenSymbol,
+    messageDomain,
+    edgeCommitmentCount: options.multilateralEdgeCommitmentCount,
+    resultsLogPath: resolveInputPath(
+      process.cwd(),
+      options.blsSearchResultsLogPath
+    ),
+    runId,
+    scenarioSeed: options.blsRandomSeed,
+    randomMinAmount: options.blsRandomMinAmount,
+    randomMaxAmount: options.blsRandomMaxAmount,
+    denseChannelCap: options.blsMaxDenseChannels,
+    computeUnitLimit: options.blsComputeUnitLimit,
+  };
+}
+
+function selectMultilateralEdgesForCandidate(
+  context: MultilateralSearchContext,
+  definition: MultilateralScenarioDefinition,
+  candidateValue: number
+): MultilateralEdgeSelection {
+  const edgeByKey = new Map(
+    context.completeGraphEdges.map((edge) => [
+      multilateralEdgeKey(edge.payer.participantId, edge.payee.participantId),
+      edge,
+    ])
+  );
+
+  if (definition.mode === "max-participants") {
+    const participants = definition.fullParticipantSet.slice(0, candidateValue);
+    const edges = participants.map((payer, index) => {
+      const payee = participants[(index + 1) % participants.length];
+      const edge = edgeByKey.get(
+        multilateralEdgeKey(payer.participantId, payee.participantId)
+      );
+      if (!edge) {
+        throw new Error(
+          `Missing dense-graph edge for ${payer.name} -> ${payee.name}`
+        );
+      }
+      return edge;
+    });
+    return {
+      participants,
+      edges,
+    };
+  }
+
+  const participantIds = new Set(
+    definition.fullParticipantSet.map(
+      (participant) => participant.participantId
+    )
+  );
+  const eligibleEdges = context.completeGraphEdges.filter(
+    (edge) =>
+      participantIds.has(edge.payer.participantId) &&
+      participantIds.has(edge.payee.participantId)
+  );
+  return {
+    participants: definition.fullParticipantSet,
+    edges: eligibleEdges.slice(0, candidateValue),
+  };
+}
+
+function maxSupportedPrefixRingParticipantCount(
+  context: MultilateralSearchContext,
+  definition: MultilateralScenarioDefinition
+): number {
+  const requestedUpperBound = Math.min(
+    definition.upperBound,
+    definition.fullParticipantSet.length
+  );
+  const edgeKeys = new Set(
+    context.completeGraphEdges.map((edge) =>
+      multilateralEdgeKey(edge.payer.participantId, edge.payee.participantId)
+    )
+  );
+  let maxSupported = 0;
+  for (
+    let participantCount = definition.lowerBound;
+    participantCount <= requestedUpperBound;
+    participantCount += 1
+  ) {
+    const participants = definition.fullParticipantSet.slice(
+      0,
+      participantCount
+    );
+    const ringSupported = participants.every((payer, index) => {
+      const payee = participants[(index + 1) % participants.length];
+      return edgeKeys.has(
+        multilateralEdgeKey(payer.participantId, payee.participantId)
+      );
+    });
+    if (!ringSupported) {
+      break;
+    }
+    maxSupported = participantCount;
+  }
+  return maxSupported;
+}
+
+function uniqueWritableMetasForPubkeys(
+  pubkeys: PublicKey[]
+): Array<{ pubkey: PublicKey; isSigner: false; isWritable: true }> {
+  const seenPairAccounts = new Set<string>();
+  const metas: Array<{
+    pubkey: PublicKey;
+    isSigner: false;
+    isWritable: true;
+  }> = [];
+  for (const pubkey of pubkeys) {
+    const pairKey = pubkey.toString();
+    if (seenPairAccounts.has(pairKey)) {
+      continue;
+    }
+    seenPairAccounts.add(pairKey);
+    metas.push({
+      pubkey,
+      isSigner: false,
+      isWritable: true,
+    });
+  }
+  return metas;
+}
+
+function uniquePubkeys(pubkeys: PublicKey[]): PublicKey[] {
+  const seen = new Set<string>();
+  const unique: PublicKey[] = [];
+  for (const pubkey of pubkeys) {
+    const key = pubkey.toString();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(pubkey);
+  }
+  return unique;
+}
+
+async function prepareMultilateralRound(
+  program: Program<AgonProtocol>,
+  context: MultilateralSearchContext,
+  definition: MultilateralScenarioDefinition,
+  selection: MultilateralEdgeSelection
+): Promise<MultilateralPreparedRound> {
+  const participantIndexById = new Map(
+    selection.participants.map((participant, index) => [
+      participant.participantId,
+      index,
+    ])
+  );
+  const orderedEdges = [...selection.edges].sort((left, right) => {
+    const leftPayerIndex =
+      participantIndexById.get(left.payer.participantId) ??
+      Number.MAX_SAFE_INTEGER;
+    const rightPayerIndex =
+      participantIndexById.get(right.payer.participantId) ??
+      Number.MAX_SAFE_INTEGER;
+    if (leftPayerIndex !== rightPayerIndex) {
+      return leftPayerIndex - rightPayerIndex;
+    }
+
+    const leftPayeeIndex =
+      participantIndexById.get(left.payee.participantId) ??
+      Number.MAX_SAFE_INTEGER;
+    const rightPayeeIndex =
+      participantIndexById.get(right.payee.participantId) ??
+      Number.MAX_SAFE_INTEGER;
+    return leftPayeeIndex - rightPayeeIndex;
+  });
+  const roundBlocksByParticipantId = new Map<
+    number,
+    ClearingRoundPreviewBlockInput
+  >(
+    selection.participants.map((participant) => [
+      participant.participantId,
+      {
+        participant,
+        entries: [],
+      },
+    ])
+  );
+  let totalGrossRouted = 0;
+
+  for (const edge of orderedEdges) {
+    const payeeRef = participantIndexById.get(edge.payee.participantId);
+    if (payeeRef === undefined) {
+      throw new Error(
+        `Payee ${edge.payee.name} is missing from the candidate participant set`
+      );
+    }
+    const obligationRaw = deterministicRawChannelAmount({
+      seed: context.scenarioSeed,
+      scenarioId: definition.scenarioId,
+      payer: edge.payer,
+      payee: edge.payee,
+      decimals: context.decimals,
+      minAmount: context.randomMinAmount,
+      maxAmount: context.randomMaxAmount,
+    });
+    totalGrossRouted += obligationRaw;
+    roundBlocksByParticipantId.get(edge.payer.participantId)?.entries.push({
+      payeeRef,
+      payee: edge.payee,
+      targetCumulative:
+        edge.channel.settledCumulative.toNumber() + obligationRaw,
+    });
+  }
+
+  const roundBlocks = selection.participants.map((participant) => {
+    const block = roundBlocksByParticipantId.get(participant.participantId);
+    if (!block) {
+      throw new Error(
+        `Candidate participant ${participant.name} is missing from round blocks`
+      );
+    }
+    return block;
+  });
+  const message = createClearingRoundMessage({
+    tokenId: context.tokenId,
+    messageDomain: context.messageDomain,
+    version: BLS_CLEARING_ROUND_MESSAGE_VERSION,
+    blocks: roundBlocks.map((block) => ({
+      participantId: block.participant.participantId,
+      entries: block.entries.map((entry) => ({
+        payeeRef: entry.payeeRef,
+        targetCumulative: entry.targetCumulative,
+      })),
+    })),
+  });
+  const aggregateSignatureCompressed = aggregateBlsSignatures(
+    selection.participants.map((participant) =>
+      signBlsMessage(participant, message)
+    )
+  );
+  const remainingAccounts = [
+    ...uniqueWritableMetasForPubkeys(
+      selection.participants.map((participant) => participant.participantPda)
+    ),
+    ...uniqueWritableMetasForPubkeys(
+      orderedEdges.map((edge) => edge.channelPda)
+    ),
+  ];
+  const submitter = selection.participants[0];
+  const instruction = await program.methods
+    .settleClearingRound(message, [...aggregateSignatureCompressed])
+    .accounts({
+      tokenRegistry: findTokenRegistryPda(program.programId),
+      globalConfig: findGlobalConfigPda(program.programId),
+      submitter: submitter.keypair.publicKey,
+      instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
+    } as any)
+    .remainingAccounts(remainingAccounts)
+    .instruction();
+  const clearingRoundPreview = buildClearingRoundPayloadPreview({
+    messageDomain: context.messageDomain,
+    tokenId: context.tokenId,
+    tokenSymbol: context.tokenSymbol,
+    decimals: context.decimals,
+    blocks: roundBlocks,
+    version: BLS_CLEARING_ROUND_MESSAGE_VERSION,
+    aggregateSignature: aggregateSignatureCompressed,
+  });
+  const signedCommitmentPreview = buildSignedCommitmentPreview({
+    messageDomain: context.messageDomain,
+    decimals: context.decimals,
+    tokenSymbol: context.tokenSymbol,
+    inputs: orderedEdges
+      .slice(0, Math.min(SIGNED_COMMITMENT_PREVIEW_COUNT, orderedEdges.length))
+      .map((edge) => {
+        const block = roundBlocksByParticipantId.get(edge.payer.participantId);
+        const matchingEntry = block?.entries.find(
+          (entry) =>
+            edge.payee.participantId ===
+            selection.participants[entry.payeeRef]?.participantId
+        );
+        return {
+          payer: edge.payer,
+          payee: edge.payee,
+          committedAmount:
+            matchingEntry?.targetCumulative ??
+            edge.channel.settledCumulative.toNumber(),
+          tokenId: context.tokenId,
+        };
+      }),
+  });
+
+  return {
+    participants: selection.participants,
+    edges: orderedEdges,
+    roundBlocks,
+    message,
+    aggregateSignatureCompressed,
+    instruction,
+    clearingRoundPreview,
+    signedCommitmentPreview,
+    totalGrossRouted,
+    totalUnderlyingCommitments:
+      context.edgeCommitmentCount * orderedEdges.length,
+  };
+}
+
+async function evaluateMultilateralCandidate(
+  provider: anchor.AnchorProvider,
+  program: Program<AgonProtocol>,
+  context: MultilateralSearchContext,
+  definition: MultilateralScenarioDefinition,
+  candidateValue: number
+): Promise<{
+  attempt: MultilateralSearchAttempt;
+  preparedRound: MultilateralPreparedRound;
+}> {
+  const selection = selectMultilateralEdgesForCandidate(
+    context,
+    definition,
+    candidateValue
+  );
+  const candidate: MultilateralCandidate = {
+    participantCount: selection.participants.length,
+    channelCount: selection.edges.length,
+  };
+  const preparedRound = await prepareMultilateralRound(
+    program,
+    context,
+    definition,
+    selection
+  );
+  const txBytes = await estimateVersionedTransactionBytes({
+    connection: provider.connection,
+    feePayer: context.sponsor,
+    instructions: buildBlsExecutionInstructions(
+      context.computeUnitLimit,
+      preparedRound.instruction
+    ),
+    lookupTables: context.lookupTables,
+    extraSigners: context.extraSigners,
+  });
+  const fitsPacket = txBytes <= LEGACY_PACKET_DATA_SIZE;
+  let simulationPassed = false;
+  let simulationError: string | null = null;
+  let simulationLogs: string[] = [];
+
+  if (fitsPacket) {
+    const simulation = await simulateVersionedTransaction({
+      connection: provider.connection,
+      feePayer: context.sponsor,
+      instructions: buildBlsExecutionInstructions(
+        context.computeUnitLimit,
+        preparedRound.instruction
+      ),
+      lookupTables: context.lookupTables,
+      extraSigners: context.extraSigners,
+    });
+    simulationPassed = simulation.ok;
+    simulationError = simulation.error;
+    simulationLogs = simulation.logs;
+  } else {
+    simulationError = "packet_limit_exceeded";
+  }
+
+  const attempt: MultilateralSearchAttempt = {
+    candidate,
+    txBytes,
+    fitsPacket,
+    simulationPassed,
+    simulationError,
+    messageBytes: preparedRound.message.length,
+    aggregateSignatureBytes: preparedRound.aggregateSignatureCompressed.length,
+  };
+
+  await appendBlsSearchResult(context.resultsLogPath, {
+    timestamp: new Date().toISOString(),
+    runId: context.runId,
+    programId: program.programId.toString(),
+    rpcEndpoint: provider.connection.rpcEndpoint,
+    denseChannelCap: context.denseChannelCap,
+    computeUnitLimit: context.computeUnitLimit,
+    scenarioId: definition.scenarioId,
+    scenarioTitle: definition.scenarioTitle,
+    mode: definition.mode,
+    participantCount: attempt.candidate.participantCount,
+    channelCount: attempt.candidate.channelCount,
+    txBytes: attempt.txBytes,
+    packetLimit: LEGACY_PACKET_DATA_SIZE,
+    fitsPacket: attempt.fitsPacket,
+    simulationPassed: attempt.simulationPassed,
+    simulationError: attempt.simulationError,
+    simulationLogs:
+      simulationLogs.length > 0 ? simulationLogs.slice(-12) : undefined,
+    submittedLive: false,
+  });
+
+  logStep(
+    `Search candidate ${attempt.candidate.participantCount} participants / ${
+      attempt.candidate.channelCount
+    } channels -> ${attempt.txBytes}/${LEGACY_PACKET_DATA_SIZE} bytes, ${
+      attempt.simulationPassed
+        ? "simulation passed"
+        : `simulation failed (${attempt.simulationError})`
+    }`
+  );
+
+  return {
+    attempt,
+    preparedRound,
+  };
+}
+
+async function findLargestSimulatedCandidate(
+  provider: anchor.AnchorProvider,
+  program: Program<AgonProtocol>,
+  context: MultilateralSearchContext,
+  definition: MultilateralScenarioDefinition
+): Promise<MultilateralSearchResult> {
+  let low = definition.lowerBound;
+  let high = definition.upperBound;
+  let best: EvaluatedMultilateralCandidate | null = null;
+  const successfulCandidates: EvaluatedMultilateralCandidate[] = [];
+
+  while (low <= high) {
+    const candidateValue = Math.floor((low + high) / 2);
+    const evaluated = await evaluateMultilateralCandidate(
+      provider,
+      program,
+      context,
+      definition,
+      candidateValue
+    );
+    if (evaluated.attempt.fitsPacket && evaluated.attempt.simulationPassed) {
+      best = evaluated;
+      successfulCandidates.push(evaluated);
+      low = candidateValue + 1;
+    } else {
+      high = candidateValue - 1;
+    }
+  }
+
+  if (!best) {
+    throw new Error(
+      `No executable BLS candidate found for ${definition.scenarioTitle}`
+    );
+  }
+
+  successfulCandidates.sort(
+    (left, right) =>
+      right.attempt.candidate.channelCount -
+        left.attempt.candidate.channelCount ||
+      right.attempt.candidate.participantCount -
+        left.attempt.candidate.participantCount
+  );
+
+  return { best, successfulCandidates };
+}
+
+function isBetterMaxChannelsEvaluation(
+  currentBest: MultilateralCandidateEvaluation | null,
+  candidate: MultilateralCandidateEvaluation
+): boolean {
+  if (!currentBest) {
+    return true;
+  }
+  if (
+    candidate.attempt.candidate.channelCount !==
+    currentBest.attempt.candidate.channelCount
+  ) {
+    return (
+      candidate.attempt.candidate.channelCount >
+      currentBest.attempt.candidate.channelCount
+    );
+  }
+  return (
+    candidate.attempt.candidate.participantCount >
+    currentBest.attempt.candidate.participantCount
+  );
+}
+
+class LiveMultilateralSubmitError extends Error {
+  readonly originalError: unknown;
+
+  constructor(attempt: MultilateralSearchAttempt, originalError: unknown) {
+    super(
+      `Live BLS submission failed for ${
+        attempt.candidate.participantCount
+      } participants / ${
+        attempt.candidate.channelCount
+      } channels: ${errorMessage(originalError)}`
+    );
+    this.name = "LiveMultilateralSubmitError";
+    this.originalError = originalError;
+  }
+}
+
+async function appendBlsLiveSubmitResult(params: {
+  provider: anchor.AnchorProvider;
+  program: Program<AgonProtocol>;
+  context: MultilateralSearchContext;
+  definition: MultilateralScenarioDefinition;
+  attempt: MultilateralSearchAttempt;
+  liveSuccess: boolean;
+  signature?: string;
+  liveError?: unknown;
+  liveLogs?: string[];
+  finalSimulationPassed?: boolean;
+  finalSimulationError?: string | null;
+  finalSimulationLogs?: string[];
+}): Promise<void> {
+  await appendBlsSearchResult(params.context.resultsLogPath, {
+    timestamp: new Date().toISOString(),
+    runId: params.context.runId,
+    programId: params.program.programId.toString(),
+    rpcEndpoint: params.provider.connection.rpcEndpoint,
+    denseChannelCap: params.context.denseChannelCap,
+    computeUnitLimit: params.context.computeUnitLimit,
+    scenarioId: params.definition.scenarioId,
+    scenarioTitle: params.definition.scenarioTitle,
+    mode: params.definition.mode,
+    participantCount: params.attempt.candidate.participantCount,
+    channelCount: params.attempt.candidate.channelCount,
+    txBytes: params.attempt.txBytes,
+    packetLimit: LEGACY_PACKET_DATA_SIZE,
+    fitsPacket: params.attempt.fitsPacket,
+    simulationPassed: params.attempt.simulationPassed,
+    simulationError: params.attempt.simulationError,
+    submittedLive: true,
+    liveSuccess: params.liveSuccess,
+    signature: params.signature,
+    liveError:
+      params.liveError === undefined
+        ? undefined
+        : errorMessage(params.liveError),
+    liveLogs:
+      params.liveLogs && params.liveLogs.length > 0
+        ? params.liveLogs.slice(-12)
+        : undefined,
+    finalSimulationPassed: params.finalSimulationPassed,
+    finalSimulationError: params.finalSimulationError,
+    finalSimulationLogs:
+      params.finalSimulationLogs && params.finalSimulationLogs.length > 0
+        ? params.finalSimulationLogs.slice(-12)
+        : undefined,
+  });
+}
+
+async function submitMultilateralScenario(
+  provider: anchor.AnchorProvider,
+  program: Program<AgonProtocol>,
+  context: MultilateralSearchContext,
+  definition: MultilateralScenarioDefinition,
+  attempt: MultilateralSearchAttempt,
+  preparedRound: MultilateralPreparedRound
+): Promise<MultilateralScenarioResult> {
+  logStep(
+    `Selected live BLS candidate: ${attempt.candidate.participantCount} participants / ${attempt.candidate.channelCount} channels`
+  );
+
+  const participantBalancesBefore = await Promise.all(
+    preparedRound.participants.map(async (participant) => ({
+      participant,
+      balance: await fetchInternalBalance(
+        program,
+        participant,
+        context.tokenId
+      ),
+    }))
+  );
+  const liveInstructions = buildBlsExecutionInstructions(
+    context.computeUnitLimit,
+    preparedRound.instruction
+  );
+  let finalSimulation: {
+    ok: boolean;
+    error: string | null;
+    logs: string[];
+  };
+  try {
+    finalSimulation = await simulateVersionedTransaction({
+      connection: provider.connection,
+      feePayer: context.sponsor,
+      instructions: liveInstructions,
+      lookupTables: context.lookupTables,
+      extraSigners: context.extraSigners,
+    });
+  } catch (error) {
+    const logs = await getTransactionErrorLogs(provider.connection, error);
+    await appendBlsLiveSubmitResult({
+      provider,
+      program,
+      context,
+      definition,
+      attempt,
+      liveSuccess: false,
+      liveError: error,
+      liveLogs: logs,
+      finalSimulationPassed: false,
+      finalSimulationError: errorMessage(error),
+      finalSimulationLogs: logs,
+    });
+    throw new LiveMultilateralSubmitError(attempt, error);
+  }
+  if (!finalSimulation.ok) {
+    const error = new Error(
+      `Final live simulation failed (${finalSimulation.error})`
+    );
+    (error as any).logs = finalSimulation.logs;
+    await appendBlsLiveSubmitResult({
+      provider,
+      program,
+      context,
+      definition,
+      attempt,
+      liveSuccess: false,
+      liveError: error,
+      liveLogs: finalSimulation.logs,
+      finalSimulationPassed: false,
+      finalSimulationError: finalSimulation.error,
+      finalSimulationLogs: finalSimulation.logs,
+    });
+    throw new LiveMultilateralSubmitError(attempt, error);
+  }
+
+  let signature: string;
+  try {
+    signature = await sendVersionedTransaction({
+      connection: provider.connection,
+      feePayer: context.sponsor,
+      instructions: liveInstructions,
+      lookupTables: context.lookupTables,
+      extraSigners: context.extraSigners,
+      // BLS rounds are explicitly simulated immediately above. Skipping RPC
+      // preflight avoids a second load-balanced devnet simulation from
+      // disagreeing after the client has already validated the exact tx shape.
+      skipPreflight: true,
+    });
+  } catch (error) {
+    const logs = await getTransactionErrorLogs(provider.connection, error);
+    await appendBlsLiveSubmitResult({
+      provider,
+      program,
+      context,
+      definition,
+      attempt,
+      liveSuccess: false,
+      liveError: error,
+      liveLogs: logs,
+      finalSimulationPassed: true,
+      finalSimulationError: null,
+      finalSimulationLogs: finalSimulation.logs,
+    });
+    throw new LiveMultilateralSubmitError(attempt, error);
+  }
+  const participantBalancesAfter = await Promise.all(
+    preparedRound.participants.map(async (participant) => ({
+      participant,
+      balance: await fetchInternalBalance(
+        program,
+        participant,
+        context.tokenId
+      ),
+    }))
+  );
+  const channelEdgesAfter = await Promise.all(
+    preparedRound.edges.map(async (edge) => ({
+      ...edge,
+      afterChannel: await fetchDirectionalChannelState(
+        program,
+        edge.channelPda,
+        edge.payer.participantId,
+        edge.payee.participantId
+      ),
+    }))
+  );
+  const edgeByKey = new Map(
+    context.completeGraphEdges.map((edge) => [
+      multilateralEdgeKey(edge.payer.participantId, edge.payee.participantId),
+      edge,
+    ])
+  );
+  for (const updatedEdge of channelEdgesAfter) {
+    const cached = edgeByKey.get(
+      multilateralEdgeKey(
+        updatedEdge.payer.participantId,
+        updatedEdge.payee.participantId
+      )
+    );
+    if (cached) {
+      cached.channel = updatedEdge.afterChannel;
+    }
+  }
+
+  await appendBlsLiveSubmitResult({
+    provider,
+    program,
+    context,
+    definition,
+    attempt,
+    liveSuccess: true,
+    signature,
+    finalSimulationPassed: true,
+    finalSimulationError: null,
+  });
+
+  const incomingByPayee = new Map<
+    number,
+    { incomingCount: number; payers: Set<number> }
+  >();
+  for (const block of preparedRound.roundBlocks) {
+    for (const entry of block.entries) {
+      const current = incomingByPayee.get(entry.payee.participantId) ?? {
+        incomingCount: 0,
+        payers: new Set<number>(),
+      };
+      current.incomingCount += 1;
+      current.payers.add(block.participant.participantId);
+      incomingByPayee.set(entry.payee.participantId, current);
+    }
+  }
+  const equivalentBundleTxCount = incomingByPayee.size;
+  const batchSettlementParticipantWrites = [...incomingByPayee.values()].reduce(
+    (sum, stat) => sum + stat.payers.size + 1,
+    0
+  );
+  const multilateralParticipantBalanceWrites = participantBalancesBefore.reduce(
+    (sum, { balance }, index) =>
+      sum +
+      (balance.available === participantBalancesAfter[index].balance.available
+        ? 0
+        : 1),
+    0
+  );
+
+  logStep(
+    `Flagship multilateral clearing example: ${preparedRound.totalUnderlyingCommitments.toLocaleString(
+      "en-US"
+    )} modeled underlying micropayments collapsed into 1 BLS round across ${
+      preparedRound.edges.length
+    } directed channels`
+  );
+  logStep(
+    `Gross value routed: ${formatAmount(
+      preparedRound.totalGrossRouted,
+      context.decimals
+    )} ${context.tokenSymbol} total from deterministic obligations between ${
+      context.randomMinAmount
+    } and ${context.randomMaxAmount} ${context.tokenSymbol}`
+  );
+  logStep(
+    `Equivalent bundle-settlement baseline: ${
+      preparedRound.edges.length
+    } latest commitments grouped into ${equivalentBundleTxCount} payee-side bundle tx${
+      equivalentBundleTxCount === 1 ? "" : "s"
+    }, ${batchSettlementParticipantWrites} participant balance writes, ${
+      preparedRound.edges.length
+    } channel-state updates`
+  );
+  logStep(
+    `BLS multilateral compression vs bundle settlement: ${formatCompressionRatio(
+      equivalentBundleTxCount
+    )}x fewer settlement txs (${equivalentBundleTxCount} -> 1), ${formatCompressionRatio(
+      preparedRound.edges.length
+    )}x fewer signed payloads at final settlement (${
+      preparedRound.edges.length
+    } -> 1 aggregate signature), ${formatCompressionRatio(
+      preparedRound.participants.length
+    )}x signer-envelope compression (${
+      preparedRound.participants.length
+    } participant signatures -> 1 aggregate signature), ${
+      multilateralParticipantBalanceWrites === 0
+        ? `participant balance writes eliminated (${batchSettlementParticipantWrites} -> 0)`
+        : `${formatCompressionRatio(
+            batchSettlementParticipantWrites /
+              multilateralParticipantBalanceWrites
+          )}x fewer participant balance writes (${batchSettlementParticipantWrites} -> ${multilateralParticipantBalanceWrites})`
+    }`
+  );
+  logStep(
+    `Channel-state writes today: no compression yet (${preparedRound.edges.length} -> ${preparedRound.edges.length}); every unilateral channel still advances in the round.`
+  );
+  logStep(
+    `  Actual serialized tx size (BLS v0 + ALT, self-funded): ${attempt.txBytes}/${LEGACY_PACKET_DATA_SIZE} bytes`
+  );
+  logSignedCommitmentPreview(preparedRound.signedCommitmentPreview);
+  logClearingRoundPayloadPreview(preparedRound.clearingRoundPreview);
+  logSavingsComparison(
+    preparedRound.totalUnderlyingCommitments,
+    1,
+    "1 multilateral clearing round"
+  );
+  participantBalancesBefore.forEach(({ participant, balance }, index) => {
+    logStep(
+      `  ${participant.name} internal: ${formatAmount(
+        balance.available,
+        context.decimals
+      )} -> ${formatAmount(
+        participantBalancesAfter[index].balance.available,
+        context.decimals
+      )}`
+    );
+  });
+  const channelSamples = channelEdgesAfter
+    .slice(0, Math.min(4, channelEdgesAfter.length))
+    .map(
+      ({ payer, payee, channel, afterChannel }) =>
+        `${payer.name}->${payee.name} ${formatAmount(
+          channel.settledCumulative.toNumber(),
+          context.decimals
+        )} -> ${formatAmount(
+          afterChannel.settledCumulative.toNumber(),
+          context.decimals
+        )}`
+    )
+    .join("; ");
+  logStep(
+    `  Channel states: ${channelEdgesAfter.length} channels advanced; sample ${channelSamples}`
+  );
+  logStep(`  Explorer: ${explorerUrl(signature)}`);
+  await logScenarioEvents(provider, program, signature);
+
+  return {
+    primarySignature: signature,
+    benchmark: createBenchmarkScenario({
+      id: definition.scenarioId,
+      title: definition.scenarioTitle,
+      settlementMode: "multilateral-clearing",
+      participantCount: preparedRound.participants.length,
+      channelCount: preparedRound.edges.length,
+      underlyingPaymentCount: preparedRound.totalUnderlyingCommitments,
+      grossValueRaw: preparedRound.totalGrossRouted,
+      decimals: context.decimals,
+      tokenSymbol: context.tokenSymbol,
+      signatures: [signature],
+      serializedTransactionBytes: [attempt.txBytes],
+      signedMessageBytes: preparedRound.message.length,
+      signatureCount: 1,
+      participantBalanceWrites: multilateralParticipantBalanceWrites,
+      channelLaneWrites: preparedRound.edges.length,
+      requestedShape: {
+        participantCount:
+          definition.mode === "max-participants"
+            ? definition.upperBound
+            : definition.fullParticipantSet.length,
+        channelCount: definition.upperBound,
+      },
+      achievedShape: attempt.candidate,
+      notes: [
+        `BLS aggregated ${preparedRound.participants.length} participant cosignatures into one on-chain signature envelope.`,
+        `Dense-graph search results were appended to ${context.resultsLogPath}.`,
+      ],
+    }),
+    settledChannelCount: preparedRound.edges.length,
+  };
+}
+
+async function submitLargestLiveMultilateralScenario(
+  provider: anchor.AnchorProvider,
+  program: Program<AgonProtocol>,
+  context: MultilateralSearchContext,
+  definition: MultilateralScenarioDefinition,
+  searchResult: MultilateralSearchResult
+): Promise<MultilateralScenarioResult> {
+  const candidates = [...searchResult.successfulCandidates];
+  if (
+    !candidates.some(
+      (candidate) =>
+        candidate.attempt.candidate.participantCount ===
+          searchResult.best.attempt.candidate.participantCount &&
+        candidate.attempt.candidate.channelCount ===
+          searchResult.best.attempt.candidate.channelCount
+    )
+  ) {
+    candidates.unshift(searchResult.best);
+  }
+
+  let lastLiveSubmitError: unknown = null;
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (index > 0) {
+      logStep(
+        `Retrying BLS live submission with next smaller simulated candidate: ${candidate.attempt.candidate.participantCount} participants / ${candidate.attempt.candidate.channelCount} channels`
+      );
+    }
+
+    try {
+      return await submitMultilateralScenario(
+        provider,
+        program,
+        context,
+        definition,
+        candidate.attempt,
+        candidate.preparedRound
+      );
+    } catch (error) {
+      if (!(error instanceof LiveMultilateralSubmitError)) {
+        throw error;
+      }
+      lastLiveSubmitError = error.originalError;
+      logStep(
+        `Live BLS submit failed for ${
+          candidate.attempt.candidate.participantCount
+        } participants / ${
+          candidate.attempt.candidate.channelCount
+        } channels: ${errorMessage(error.originalError).split("\n")[0]}`
+      );
+    }
+  }
+
+  throw lastLiveSubmitError instanceof Error
+    ? lastLiveSubmitError
+    : new Error(
+        `Unable to submit any simulated BLS candidate for ${definition.scenarioTitle}`
+      );
+}
+
+async function runBinarySearchMultilateralScenario(
+  provider: anchor.AnchorProvider,
+  program: Program<AgonProtocol>,
+  context: MultilateralSearchContext,
+  definition: MultilateralScenarioDefinition
+): Promise<MultilateralScenarioResult> {
+  let searchDefinition = definition;
+  if (definition.mode === "max-participants") {
+    const supportedUpperBound = maxSupportedPrefixRingParticipantCount(
+      context,
+      definition
+    );
+    if (supportedUpperBound < definition.lowerBound) {
+      throw new Error(
+        `Dense graph cap ${context.denseChannelCap} did not prepare enough prefix-ring channels for ${definition.scenarioTitle}; increase AGON_DEMO_BLS_MAX_DENSE_CHANNELS.`
+      );
+    }
+    if (supportedUpperBound < definition.upperBound) {
+      searchDefinition = {
+        ...definition,
+        upperBound: supportedUpperBound,
+      };
+    }
+  }
+
+  logSection(searchDefinition.scenarioTitle);
+  logStep(
+    searchDefinition.mode === "max-participants"
+      ? `Binary searching participant count from ${searchDefinition.lowerBound} to ${searchDefinition.upperBound} using one directed edge per participant`
+      : `Binary searching channel count from ${searchDefinition.lowerBound} to ${searchDefinition.upperBound} over the full ${searchDefinition.fullParticipantSet.length}-participant dense graph`
+  );
+  if (searchDefinition.upperBound < definition.upperBound) {
+    logStep(
+      `Dense graph cap limited this run from ${definition.upperBound} to ${searchDefinition.upperBound} participants`
+    );
+  }
+  if (
+    !context.sponsor.publicKey.equals(
+      searchDefinition.fullParticipantSet[0].keypair.publicKey
+    )
+  ) {
+    logStep(
+      `Using ${context.sponsor.publicKey.toString()} as the fee sponsor for the multilateral round while ${
+        searchDefinition.fullParticipantSet[0].name
+      } remains the signed submitter`
+    );
+  }
+
+  const searchResult = await findLargestSimulatedCandidate(
+    provider,
+    program,
+    context,
+    searchDefinition
+  );
+
+  return submitLargestLiveMultilateralScenario(
+    provider,
+    program,
+    context,
+    searchDefinition,
+    searchResult
+  );
+}
+
+async function runAdaptiveMaxChannelsScenario(
+  provider: anchor.AnchorProvider,
+  program: Program<AgonProtocol>,
+  context: MultilateralSearchContext,
+  scenarioId: string,
+  scenarioTitle: string
+): Promise<MultilateralScenarioResult> {
+  logSection(scenarioTitle);
+  logStep(
+    `Searching max channels across participant counts from ${context.fullParticipants.length} down to 3 within the ${context.denseChannelCap}-channel dense-graph cap`
+  );
+  if (
+    !context.sponsor.publicKey.equals(
+      context.fullParticipants[0].keypair.publicKey
+    )
+  ) {
+    logStep(
+      `Using ${context.sponsor.publicKey.toString()} as the fee sponsor for the multilateral round while ${
+        context.fullParticipants[0].name
+      } remains the signed submitter`
+    );
+  }
+
+  let best: MultilateralCandidateEvaluation | null = null;
+  let lastError: unknown = null;
+
+  for (
+    let participantCount = context.fullParticipants.length;
+    participantCount >= 3;
+    participantCount -= 1
+  ) {
+    const participantSubset = context.fullParticipants.slice(
+      0,
+      participantCount
+    );
+    const participantIds = new Set(
+      participantSubset.map((participant) => participant.participantId)
+    );
+    const eligibleEdgeCount = context.completeGraphEdges.filter(
+      (edge) =>
+        participantIds.has(edge.payer.participantId) &&
+        participantIds.has(edge.payee.participantId)
+    ).length;
+    const upperBound = Math.min(context.denseChannelCap, eligibleEdgeCount);
+    if (upperBound < participantCount) {
+      continue;
+    }
+    if (best && upperBound <= best.attempt.candidate.channelCount) {
+      continue;
+    }
+
+    const lowerBound = Math.max(
+      participantCount,
+      best ? best.attempt.candidate.channelCount + 1 : participantCount
+    );
+    if (lowerBound > upperBound) {
+      continue;
+    }
+
+    const definition: MultilateralScenarioDefinition = {
+      scenarioId,
+      scenarioTitle,
+      mode: "max-channels",
+      fullParticipantSet: participantSubset,
+      lowerBound,
+      upperBound,
+    };
+
+    try {
+      logStep(
+        `Evaluating ${participantCount} participants with channel search range ${lowerBound}-${upperBound}`
+      );
+      const searchResult = await findLargestSimulatedCandidate(
+        provider,
+        program,
+        context,
+        definition
+      );
+      const candidateEvaluation: MultilateralCandidateEvaluation = {
+        definition,
+        attempt: searchResult.best.attempt,
+        preparedRound: searchResult.best.preparedRound,
+        successfulCandidates: searchResult.successfulCandidates,
+      };
+      if (isBetterMaxChannelsEvaluation(best, candidateEvaluation)) {
+        best = candidateEvaluation;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (!best) {
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(`No executable BLS candidate found for ${scenarioTitle}`);
+  }
+
+  return submitLargestLiveMultilateralScenario(
+    provider,
+    program,
+    context,
+    best.definition,
+    {
+      best: {
+        attempt: best.attempt,
+        preparedRound: best.preparedRound,
+      },
+      successfulCandidates: best.successfulCandidates,
+    }
+  );
 }
 
 async function logFinalSummary(
@@ -3664,21 +6349,24 @@ async function main(): Promise<void> {
 
   const readiness = await ensureProgramReady(provider, program, options);
   logStep(`Chain ID: ${readiness.chainId}`);
-  logStep(`Message domain: ${trimHex(readiness.messageDomain.toString("hex"))}`);
+  logStep(
+    `Message domain: ${trimHex(readiness.messageDomain.toString("hex"))}`
+  );
   logStep(`Fee recipient wallet: ${readiness.feeRecipient.toString()}`);
   logStep(`Vault token account: ${readiness.vaultTokenAccount.toString()}`);
   logStep(`Mint decimals: ${readiness.decimals}`);
-  const preparedWallets = options.reuseManifestPath
-    ? await loadWalletsFromManifest(
-        options.reuseManifestPath,
-        options.walletCount,
-        repoRoot
-      )
-    : await createWalletFiles(options.walletCount, repoRoot);
+  const preparedWallets = await prepareDemoWallets(options, repoRoot);
   const { runId, walletDir, wallets: loadedWallets } = preparedWallets;
   const wallets = selectActiveWallets(loadedWallets, options.activeWalletNames);
-  if (options.reuseManifestPath) {
+  const walletManifestPath = resolveDefaultWalletManifestPath(
+    repoRoot,
+    options.walletManifestPath
+  );
+  if (preparedWallets.source === "manifest") {
     logStep(`Reusing wallet files from ${walletDir}`);
+    if (preparedWallets.manifestPath) {
+      logStep(`Wallet manifest: ${preparedWallets.manifestPath}`);
+    }
   } else {
     logStep(`Wallet files written to ${walletDir}`);
   }
@@ -3687,6 +6375,21 @@ async function main(): Promise<void> {
       `Active wallets: ${wallets.map((wallet) => wallet.name).join(", ")}`
     );
   }
+  await saveWalletManifest(
+    walletManifestPath,
+    provider,
+    program,
+    deployer,
+    options.tokenId,
+    options.tokenSymbol,
+    options.tokenMint,
+    readiness.decimals,
+    readiness.vaultTokenAccount,
+    readiness.feeRecipient,
+    loadedWallets,
+    runId,
+    preparedWallets.manifestPath ?? options.reuseManifestPath
+  );
 
   if (options.skipFunding) {
     logStep("Skipping wallet funding and reusing current external balances");
@@ -3713,6 +6416,7 @@ async function main(): Promise<void> {
     wallets,
     options.skipParticipantInit
   );
+  await ensureParticipantBlsKeys(program, readiness.messageDomain, wallets);
   await ensureDeposits(
     program,
     wallets,
@@ -3723,9 +6427,22 @@ async function main(): Promise<void> {
     options.depositPlan,
     options.skipDeposits
   );
-  const multilateralTargets = determineMultilateralSearchTargets(
-    clearingCapacitySummary,
-    wallets.length
+  const reusableManifestPath =
+    preparedWallets.manifestPath ?? options.reuseManifestPath;
+  await saveWalletManifest(
+    walletManifestPath,
+    provider,
+    program,
+    deployer,
+    options.tokenId,
+    options.tokenSymbol,
+    options.tokenMint,
+    readiness.decimals,
+    readiness.vaultTokenAccount,
+    readiness.feeRecipient,
+    loadedWallets,
+    runId,
+    reusableManifestPath
   );
 
   const singleScenario = await runSingleCommitmentScenario(
@@ -3755,35 +6472,7 @@ async function main(): Promise<void> {
     options.batchCommitmentAmount,
     options.batchCommitmentLogEvery
   );
-  const unilateralScenario = await runUnilateralClearingScenario(
-    provider,
-    program,
-    readiness.messageDomain,
-    options.tokenId,
-    options.tokenSymbol,
-    readiness.decimals,
-    wallets[0],
-    wallets[3],
-    wallets[4],
-    options.unilateralPayeeACommitmentCount,
-    options.unilateralPayeeBCommitmentCount,
-    options.unilateralAmountPerCommitment,
-    options.unilateralLockAmount
-  );
-  const bilateralScenario = await runBilateralClearingScenario(
-    provider,
-    program,
-    readiness.messageDomain,
-    options.tokenId,
-    options.tokenSymbol,
-    readiness.decimals,
-    wallets[1],
-    wallets[2],
-    options.bilateralForwardCommitmentCount,
-    options.bilateralReverseCommitmentCount,
-    options.bilateralAmountPerCommitment
-  );
-  const multilateralScenario = await runLargestExecutableMultilateralScenario(
+  const multilateralSearchContext = await prepareMultilateralSearchContext(
     provider,
     program,
     readiness.messageDomain,
@@ -3791,34 +6480,58 @@ async function main(): Promise<void> {
     options.tokenSymbol,
     readiness.decimals,
     wallets,
-    multilateralTargets,
-    options.multilateralEdgeCommitmentCount,
-    options.multilateralAmountPerCommitment
+    readiness.vaultTokenAccount,
+    options,
+    runId
   );
+  const blsMaxParticipantsScenario = await runBinarySearchMultilateralScenario(
+    provider,
+    program,
+    multilateralSearchContext,
+    {
+      scenarioId: "blsMaxParticipantsClearing",
+      scenarioTitle:
+        "Scenario 5/6 - BLS Clearing Round (Max Participants v0 + ALT)",
+      mode: "max-participants",
+      fullParticipantSet: wallets,
+      lowerBound: 3,
+      upperBound: wallets.length,
+    }
+  );
+  const blsMaxChannelsScenario = options.skipMaxChannels
+    ? null
+    : await runAdaptiveMaxChannelsScenario(
+        provider,
+        program,
+        multilateralSearchContext,
+        "blsMaxChannelsClearing",
+        "Scenario 6/6 - BLS Clearing Round (Max Channels v0 + ALT)"
+      );
   const benchmarkScenarios = [
     singleScenario.benchmark,
     batchScenario.benchmark,
-    unilateralScenario.benchmark,
-    bilateralScenario.benchmark,
-    multilateralScenario.benchmark,
+    blsMaxParticipantsScenario.benchmark,
+    ...(blsMaxChannelsScenario ? [blsMaxChannelsScenario.benchmark] : []),
   ];
   const scenarioSignatures: ScenarioSignatureMap = {
     singleCommitment: singleScenario.primarySignature,
     batchCommitment: batchScenario.primarySignature,
-    unilateralClearing: unilateralScenario.primarySignature,
-    bilateralClearing: bilateralScenario.primarySignature,
-    multilateralClearing: multilateralScenario.primarySignature,
+    blsMaxParticipantsClearing: blsMaxParticipantsScenario.primarySignature,
+    ...(blsMaxChannelsScenario
+      ? { blsMaxChannelsClearing: blsMaxChannelsScenario.primarySignature }
+      : {}),
   };
 
-  logClearingRoundCapacityAnalysis(
-    program.programId,
-    clearingCapacitySummary,
-    multilateralScenario.benchmark.requestedShape ?? multilateralTargets.overall,
-    multilateralScenario.benchmark.achievedShape ?? {
-      participantCount: multilateralScenario.benchmark.participantCount,
-      channelCount: multilateralScenario.settledChannelCount,
-    }
-  );
+  if (blsMaxChannelsScenario) {
+    logClearingRoundCapacityAnalysis(
+      program.programId,
+      clearingCapacitySummary,
+      blsMaxParticipantsScenario,
+      blsMaxChannelsScenario
+    );
+  } else {
+    logStep("Skipping BLS max-channels scenario by request");
+  }
 
   await logFinalSummary(
     provider,
@@ -3849,11 +6562,20 @@ async function main(): Promise<void> {
     },
     feeRecipient: readiness.feeRecipient.toString(),
     messageDomain: readiness.messageDomain.toString("hex"),
-    reusedFromManifest: options.reuseManifestPath,
+    reusedFromManifest: reusableManifestPath,
     settings: {
       skipFunding: options.skipFunding,
       skipParticipantInit: options.skipParticipantInit,
       skipDeposits: options.skipDeposits,
+      skipMaxChannels: options.skipMaxChannels,
+      walletManifestPath: walletManifestPath,
+      blsSearchResultsLogPath: multilateralSearchContext.resultsLogPath,
+      blsInternalBalanceTarget: options.blsInternalBalanceTarget,
+      blsRandomSeed: options.blsRandomSeed,
+      blsRandomMinAmount: options.blsRandomMinAmount,
+      blsRandomMaxAmount: options.blsRandomMaxAmount,
+      blsMaxDenseChannels: options.blsMaxDenseChannels,
+      blsComputeUnitLimit: options.blsComputeUnitLimit,
       singleCommitmentCount: options.singleCommitmentCount,
       singleCommitmentAmount: options.singleCommitmentAmount,
       batchCommitmentBatchCount: options.batchCommitmentBatchCount,
@@ -3904,11 +6626,20 @@ async function main(): Promise<void> {
       },
       feeRecipient: readiness.feeRecipient.toString(),
       messageDomain: readiness.messageDomain.toString("hex"),
-      reusedFromManifest: options.reuseManifestPath,
+      reusedFromManifest: reusableManifestPath,
       settings: {
         skipFunding: options.skipFunding,
         skipParticipantInit: options.skipParticipantInit,
         skipDeposits: options.skipDeposits,
+        skipMaxChannels: options.skipMaxChannels,
+        walletManifestPath: walletManifestPath,
+        blsSearchResultsLogPath: multilateralSearchContext.resultsLogPath,
+        blsInternalBalanceTarget: options.blsInternalBalanceTarget,
+        blsRandomSeed: options.blsRandomSeed,
+        blsRandomMinAmount: options.blsRandomMinAmount,
+        blsRandomMaxAmount: options.blsRandomMaxAmount,
+        blsMaxDenseChannels: options.blsMaxDenseChannels,
+        blsComputeUnitLimit: options.blsComputeUnitLimit,
         singleCommitmentCount: options.singleCommitmentCount,
         singleCommitmentAmount: options.singleCommitmentAmount,
         batchCommitmentBatchCount: options.batchCommitmentBatchCount,
@@ -3952,6 +6683,10 @@ async function main(): Promise<void> {
 
   logSection("Artifacts");
   logStep(`Wallet directory: ${walletDir}`);
+  logStep(`Reusable wallet manifest: ${walletManifestPath}`);
+  logStep(
+    `BLS search results log: ${multilateralSearchContext.resultsLogPath}`
+  );
   logStep(`Run manifest: ${manifestPath}`);
   logStep(
     `Last-run manifest: ${path.join(

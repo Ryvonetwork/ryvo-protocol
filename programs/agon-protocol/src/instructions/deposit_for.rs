@@ -2,15 +2,20 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
 use crate::events::Deposited;
-use crate::state::{GlobalConfig, ParticipantAccount, TokenRegistry};
+use crate::state::{GlobalConfig, ParticipantBucket, TokenRegistry};
 
 /// Max participants per batch (tx size / account limits)
 pub const MAX_DEPOSIT_FOR_RECIPIENTS: usize = 16;
 
-pub fn handler(ctx: Context<DepositFor>, token_id: u16, amounts: Vec<u64>) -> Result<()> {
+pub fn handler(
+    ctx: Context<DepositFor>,
+    token_id: u16,
+    participant_ids: Vec<u32>,
+    amounts: Vec<u64>,
+) -> Result<()> {
     let remaining = &ctx.remaining_accounts;
     require!(
-        !amounts.is_empty() && amounts.len() == remaining.len(),
+        !amounts.is_empty() && amounts.len() == participant_ids.len(),
         crate::errors::VaultError::InvalidDepositFor
     );
     require!(
@@ -57,37 +62,52 @@ pub fn handler(ctx: Context<DepositFor>, token_id: u16, amounts: Vec<u64>) -> Re
         total,
     )?;
 
-    // Credit each participant using manual account data manipulation
-    // to avoid lifetime issues with remaining_accounts deserialization
+    let mut bucket_bindings: Vec<(u32, usize)> = Vec::with_capacity(remaining.len());
+    let mut next_bucket_account_index = 0usize;
+
+    // Credit each participant slot. Participant bucket accounts are supplied once each
+    // in deterministic first-appearance order across participant_ids.
     for (i, amount) in amounts.iter().enumerate() {
         require!(*amount > 0, crate::errors::VaultError::AmountMustBePositive);
+        let participant_id = participant_ids[i];
+        let bucket_id = ParticipantBucket::bucket_id_for_participant_id(participant_id);
+        let bucket_account_index = if let Some((_, index)) = bucket_bindings
+            .iter()
+            .find(|(bound_bucket_id, _)| *bound_bucket_id == bucket_id)
+        {
+            *index
+        } else {
+            require!(
+                next_bucket_account_index < remaining.len(),
+                crate::errors::VaultError::InvalidDepositFor
+            );
+            let participant_info = &remaining[next_bucket_account_index];
+            ParticipantBucket::verify_account_info(participant_info, bucket_id, ctx.program_id)?;
+            bucket_bindings.push((bucket_id, next_bucket_account_index));
+            next_bucket_account_index += 1;
+            next_bucket_account_index - 1
+        };
 
-        // Get participant account from remaining_accounts
-        let participant_info = &remaining[i];
-
-        // Verify ownership (ParticipantAccount should be owned by our program)
-        require!(
-            participant_info.owner == ctx.program_id,
-            crate::errors::VaultError::ParticipantNotFound
-        );
-        ParticipantAccount::verify_pda(participant_info, ctx.program_id)?;
-
-        // Manually modify the participant account data to avoid lifetime issues
+        let participant_info = &remaining[bucket_account_index];
         let mut participant_data = participant_info.try_borrow_mut_data()?;
-        let mut participant = ParticipantAccount::try_deserialize(&mut participant_data.as_ref())?;
-
-        // Credit the participant with the specific token
-        participant.credit_token(token_id, *amount)?;
-
-        // Serialize back to the account
-        participant.try_serialize(&mut participant_data.as_mut())?;
+        ParticipantBucket::apply_token_delta_in_data(
+            participant_data.as_mut(),
+            participant_id,
+            token_id,
+            i128::from(*amount),
+        )?;
 
         emit!(Deposited {
-            participant_id: participant.participant_id,
+            participant_id,
             token_id,
             amount: *amount,
         });
     }
+
+    require!(
+        next_bucket_account_index == remaining.len(),
+        crate::errors::VaultError::InvalidDepositFor
+    );
 
     Ok(())
 }

@@ -9,6 +9,14 @@ pub struct ParticipantInitialized {
 }
 
 #[event]
+pub struct ParticipantBlsKeyRegistered {
+    pub owner: Pubkey,
+    pub participant_id: u32,
+    pub participant_bucket: Pubkey,
+    pub scheme_version: u8,
+}
+
+#[event]
 pub struct InboundChannelPolicyUpdated {
     pub participant_id: u32,
     pub inbound_channel_policy: u8,

@@ -13,6 +13,7 @@ bootstrap_tooling_path() {
   local candidate
 
   for candidate in \
+    "$HOME/.local/share/agave-v4-beta/active_release/bin" \
     "$HOME/.local/share/solana/install/active_release/bin" \
     "$HOME/.local/share/solana/install/releases/"*/solana-release/bin
   do
@@ -36,6 +37,97 @@ bootstrap_tooling_path() {
 }
 
 bootstrap_tooling_path
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/lib/rpc-env.sh"
+load_project_rpc_env "$REPO_ROOT"
+
+require_command() {
+  local command_name="$1"
+  local install_hint="$2"
+
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "Missing required deployment command: $command_name"
+    echo "$install_hint"
+    exit 1
+  fi
+}
+
+require_deploy_tooling() {
+  require_command "anchor" "Install Anchor CLI 0.32.x and make sure it is on PATH."
+  require_command "cargo" "Install Rust/Cargo and source ~/.cargo/env before deploying."
+  require_command "solana" "Install the Solana/Agave CLI and make sure solana is on PATH."
+  require_command "solana-keygen" "Install the Solana/Agave CLI and make sure solana-keygen is on PATH."
+
+  if ! cargo build-sbf --version >/dev/null 2>&1; then
+    echo "Missing required deployment command: cargo build-sbf"
+    echo "Install the Solana/Agave CLI toolchain so cargo-build-sbf is available on PATH."
+    exit 1
+  fi
+}
+
+find_agave_beta_solana_bin() {
+  local candidate="$HOME/.local/share/agave-v4-beta/active_release/bin/solana"
+  if [[ -x "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+  fi
+}
+
+program_uses_bls_syscalls() {
+  local program_path="$1"
+
+  if [[ ! -f "$program_path" ]]; then
+    return 1
+  fi
+
+  if command -v strings >/dev/null 2>&1 && strings "$program_path" | grep -q "sol_curve_decompress"; then
+    return 0
+  fi
+
+  if command -v llvm-readelf >/dev/null 2>&1 && llvm-readelf -Ws "$program_path" 2>/dev/null | grep -q "sol_curve_decompress"; then
+    return 0
+  fi
+
+  return 1
+}
+
+deploy_program_with_solana_cli() {
+  local solana_bin="$1"
+  local rpc_url="$2"
+  local wallet_file="$3"
+  local program_so="$4"
+  local program_keypair="$5"
+  local max_sign_attempts="${AGON_DEPLOY_MAX_SIGN_ATTEMPTS:-20}"
+  local compute_unit_price="${AGON_DEPLOY_COMPUTE_UNIT_PRICE:-}"
+  local skip_preflight="${AGON_DEPLOY_SKIP_PREFLIGHT:-0}"
+
+  local deploy_args=(
+    program deploy "$program_so"
+    --program-id "$program_keypair"
+    --keypair "$wallet_file"
+    --fee-payer "$wallet_file"
+    --upgrade-authority "$wallet_file"
+    --url "$rpc_url"
+    --use-rpc
+    --skip-feature-verify
+    --max-sign-attempts "$max_sign_attempts"
+    --output json-compact
+  )
+
+  if [[ -n "$compute_unit_price" ]]; then
+    deploy_args+=(--with-compute-unit-price "$compute_unit_price")
+  fi
+
+  if [[ "$skip_preflight" == "1" ]]; then
+    deploy_args+=(--skip-preflight)
+  fi
+
+  echo "🧭 Using direct solana program deploy via: $solana_bin"
+  "$solana_bin" --version
+
+  "$solana_bin" "${deploy_args[@]}"
+}
 
 sync_anchor_program_ids() {
   local program_id="$1"
@@ -83,13 +175,15 @@ if [[ "$NETWORK" != "devnet" && "$NETWORK" != "mainnet" ]]; then
   exit 1
 fi
 
+require_deploy_tooling
+
 # Setup wallet using the setup-wallet.sh script
 echo "🔑 Setting up wallet..."
 if [[ ! -d "keys" ]]; then
   mkdir -p keys
 fi
 
-./scripts/setup-wallet.sh $NETWORK
+bash ./scripts/setup-wallet.sh $NETWORK
 if [[ $? -ne 0 ]]; then
   echo "❌ Failed to setup wallet."
   exit 1
@@ -109,6 +203,7 @@ if [[ -z "$NODE_BIN" ]]; then
 fi
 
 echo "🚀 Starting Agon Protocol deployment to $NETWORK..."
+RPC_URL="$(resolve_project_rpc_url "$NETWORK")"
 
 if [[ "$FRESH_PROGRAM_ID" == "true" ]]; then
   echo "🆕 Generating a fresh program id to avoid stale onchain state..."
@@ -123,19 +218,19 @@ fi
 # Step 0: Check wallet balance and provide funding instructions
 echo "💰 Checking wallet balance..."
 if [[ "$NETWORK" == "devnet" ]]; then
-  BALANCE=$(solana balance "$WALLET_FILE" --url https://api.devnet.solana.com --keypair "$WALLET_FILE" 2>/dev/null | grep -oP '\d+\.\d+' || echo "0")
+  BALANCE=$(solana balance "$WALLET_FILE" --url "$RPC_URL" --keypair "$WALLET_FILE" 2>/dev/null | grep -oP '\d+\.\d+' || echo "0")
   echo "Current balance: $BALANCE SOL"
   if (( $(echo "$BALANCE < 2" | bc -l 2>/dev/null || echo "1") )); then
     echo "⚠️  Insufficient funds for deployment. You need at least 2 SOL."
     echo "🪂 To get devnet SOL, visit: https://faucet.solana.com/"
-    echo "   Or run: solana airdrop 2 --url https://api.devnet.solana.com --keypair $WALLET_FILE"
+    echo "   Or run: solana airdrop 2 --url $RPC_URL --keypair $WALLET_FILE"
     echo "   (Note: Devnet airdrops may be rate-limited)"
     echo ""
     read -p "Press Enter after funding your wallet to continue..."
   fi
 elif [[ "$NETWORK" == "mainnet" ]]; then
   echo "⚠️  WARNING: Make sure your wallet has sufficient SOL for mainnet deployment!"
-  echo "💰 Check your balance: solana balance $WALLET_FILE --url https://api.mainnet-beta.solana.com --keypair $WALLET_FILE"
+  echo "💰 Check your balance: solana balance $WALLET_FILE --url $RPC_URL --keypair $WALLET_FILE"
   echo "   You need ~2-3 SOL for deployment + initialization."
   read -p "Press Enter to continue with mainnet deployment..."
 fi
@@ -144,14 +239,32 @@ fi
 echo "🔍 Running verification..."
 cargo fmt --all
 cargo clippy --lib --features no-entrypoint -- -D warnings
-anchor build
+anchor build -- --features custom-heap
 
 # Step 2: Deploy to specified network
 echo "📦 Deploying to $NETWORK..."
-if [[ "$NETWORK" == "devnet" ]]; then
-  ANCHOR_PROVIDER_URL="https://api.devnet.solana.com" anchor deploy --provider.cluster devnet --provider.wallet "$WALLET_FILE"
+PROGRAM_SO="target/deploy/agon_protocol.so"
+PROGRAM_KEYPAIR="target/deploy/agon_protocol-keypair.json"
+AGAVE_SOLANA_BIN="$(find_agave_beta_solana_bin || true)"
+
+USE_DIRECT_SOLANA_DEPLOY="${AGON_DEPLOY_WITH_SOLANA_CLI:-0}"
+if [[ "$USE_DIRECT_SOLANA_DEPLOY" != "1" && "$NETWORK" == "devnet" && -n "$AGAVE_SOLANA_BIN" ]]; then
+  if program_uses_bls_syscalls "$PROGRAM_SO"; then
+    USE_DIRECT_SOLANA_DEPLOY="1"
+    echo "🧪 Detected BLS syscalls in $PROGRAM_SO, switching to direct Agave beta deploy."
+  fi
+fi
+
+if [[ "$USE_DIRECT_SOLANA_DEPLOY" == "1" ]]; then
+  if [[ -z "$AGAVE_SOLANA_BIN" ]]; then
+    echo "❌ AGON_DEPLOY_WITH_SOLANA_CLI=1 but Agave beta solana binary was not found."
+    exit 1
+  fi
+  deploy_program_with_solana_cli "$AGAVE_SOLANA_BIN" "$RPC_URL" "$WALLET_FILE" "$PROGRAM_SO" "$PROGRAM_KEYPAIR"
+elif [[ "$NETWORK" == "devnet" ]]; then
+  ANCHOR_PROVIDER_URL="$RPC_URL" anchor deploy --provider.cluster devnet --provider.wallet "$WALLET_FILE"
 elif [[ "$NETWORK" == "mainnet" ]]; then
-  ANCHOR_PROVIDER_URL="https://api.mainnet-beta.solana.com" anchor deploy --provider.cluster mainnet-beta --provider.wallet "$WALLET_FILE"
+  ANCHOR_PROVIDER_URL="$RPC_URL" anchor deploy --provider.cluster mainnet-beta --provider.wallet "$WALLET_FILE"
 fi
 
 # Step 3: Initialize the program and capture config
@@ -170,9 +283,9 @@ if [[ -n "${AGON_INITIAL_AUTHORITY:-}" ]]; then
   INIT_ARGS+=(--initial-authority "$AGON_INITIAL_AUTHORITY")
 fi
 if [[ "$NETWORK" == "devnet" ]]; then
-  CONFIG_OUTPUT=$(env ANCHOR_PROVIDER_URL="https://api.devnet.solana.com" ANCHOR_WALLET="$WALLET_FILE" "$NODE_BIN" node_modules/ts-node/dist/bin.js scripts/initialize-program.ts "${INIT_ARGS[@]}" 2>&1)
+  CONFIG_OUTPUT=$(env ANCHOR_PROVIDER_URL="$RPC_URL" ANCHOR_WALLET="$WALLET_FILE" "$NODE_BIN" node_modules/ts-node/dist/bin.js scripts/initialize-program.ts "${INIT_ARGS[@]}" 2>&1)
 elif [[ "$NETWORK" == "mainnet" ]]; then
-  CONFIG_OUTPUT=$(env ANCHOR_PROVIDER_URL="https://api.mainnet-beta.solana.com" ANCHOR_WALLET="$WALLET_FILE" "$NODE_BIN" node_modules/ts-node/dist/bin.js scripts/initialize-program.ts "${INIT_ARGS[@]}" 2>&1)
+  CONFIG_OUTPUT=$(env ANCHOR_PROVIDER_URL="$RPC_URL" ANCHOR_WALLET="$WALLET_FILE" "$NODE_BIN" node_modules/ts-node/dist/bin.js scripts/initialize-program.ts "${INIT_ARGS[@]}" 2>&1)
 fi
 
 echo "$CONFIG_OUTPUT"

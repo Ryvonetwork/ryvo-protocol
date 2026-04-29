@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "family": "synthetic-capacity",
-  "generatedAt": "2026-04-09T17:34:31.551Z",
-  "commit": null,
+  "generatedAt": "2026-04-27T18:03:53.766Z",
+  "commit": "8180b9117085aceb714717cebdf32e39078dad88",
   "cluster": "synthetic",
-  "programId": "DE4vmRRDu1EBj98pD9AuZmdTPFAyDChMmRoPRscze5g",
+  "programId": "Abmiri32ugLHBxqKma3HTkUUvDfQzGLyRq94io4JX3pv",
   "packetDataSize": 1232,
   "unilateral": {
     "legacyMessageBytes": 103,
@@ -24,37 +24,27 @@
     "currentConservativeSignedMessageBytes": 174
   },
   "clearing": {
-    "currentV0AltCycle": {
-      "participantCount": 7,
-      "channelCount": 7,
-      "serializedTxBytes": 1119,
-      "messageBytes": 63,
-      "authEnvelopeBytes": 835,
-      "remainingBytes": 113
-    },
-    "currentV0AltOverall": {
-      "participantCount": 6,
-      "channelCount": 30,
-      "serializedTxBytes": 1143,
-      "messageBytes": 153,
-      "authEnvelopeBytes": 815,
-      "remainingBytes": 89
-    },
     "blsV0AltCycle": {
       "participantCount": 32,
       "channelCount": 32,
-      "serializedTxBytes": 662,
+      "serializedTxBytes": 496,
       "messageBytes": 213,
-      "authEnvelopeBytes": 321,
-      "remainingBytes": 570
+      "authEnvelopeBytes": 265,
+      "remainingBytes": 736,
+      "participantBucketCount": 1,
+      "channelBucketCount": 4,
+      "dynamicWritableAccountCount": 5
     },
     "blsV0AltOverall": {
-      "participantCount": 13,
-      "channelCount": 139,
+      "participantCount": 16,
+      "channelCount": 225,
       "serializedTxBytes": 1230,
-      "messageBytes": 603,
-      "authEnvelopeBytes": 711,
-      "remainingBytes": 2
+      "messageBytes": 953,
+      "authEnvelopeBytes": 1005,
+      "remainingBytes": 2,
+      "participantBucketCount": 1,
+      "channelBucketCount": 1,
+      "dynamicWritableAccountCount": 2
     }
   }
 }

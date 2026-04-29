@@ -1,35 +1,42 @@
 import * as anchor from "@coral-xyz/anchor";
-import { Ed25519Program, PublicKey, SystemProgram } from "@solana/web3.js";
+import {
+  PublicKey,
+  SYSVAR_INSTRUCTIONS_PUBKEY,
+  SystemProgram,
+} from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, createMint, getAccount } from "@solana/spl-token";
 import { expect } from "chai";
 import {
+  channelBucketIdForPair,
+  createCommitmentMessage,
+  createCrossInstructionMessageEd25519Instruction,
+  createFundedTokenAccount,
+  createTestParticipant,
+  depositParticipantBalance,
+  ensureChannel,
+  expectProgramError,
+  findChannelPda,
+  findGlobalConfigPda,
+  findOwnerIndexBucketPda,
+  findTokenRegistryPda,
+  findVaultTokenAccountPda,
+  getCanonicalChannelParticipants,
+  getFeeRecipientTokenAccount,
+  individualSettlementRemainingAccounts,
+  lockChannelFundsForTest,
+  nextCommitmentAmount,
+  parseProgramEvents,
+  primaryMint,
   program,
   provider,
-  primaryMint,
-  deployer,
+  registerTestToken,
+  requestUnlockChannelFundsForTest,
+  settleIndividualForTest,
+  sleep,
   user1,
   user2,
   user4,
-  expectProgramError,
-  createTestParticipant,
-  ensureChannel,
-  createCommitmentMessage,
-  nextCommitmentAmount,
-  findParticipantPda,
-  findVaultTokenAccountPda,
-  findTokenRegistryPda,
-  sleep,
-  registerTestToken,
-  createFundedTokenAccount,
-  getFeeRecipientTokenAccount,
-  parseProgramEvents,
-  findChannelPda,
-  createCrossInstructionMessageEd25519Instruction,
-  createMultiMessageEd25519Instruction,
-  createMultiSigEd25519Instruction,
-  createClearingRoundMessage,
-  getTokenBalance,
-  TEST_CHAIN_ID,
+  deployer,
 } from "./shared/setup";
 
 const SECOND_TOKEN_ID = 2;
@@ -41,23 +48,19 @@ const NON_ASCII_TOKEN_ID = 16;
 describe("Audit Regressions", () => {
   it("rejects settling a token commitment against a channel for a different token", async () => {
     const secondToken = await registerTestToken(SECOND_TOKEN_ID, "USDT");
-    const payerParticipantPda = findParticipantPda(user1.publicKey);
     const payerSecondTokenAccount = await createFundedTokenAccount(
       user1,
       secondToken.mint,
       25_000_000
     );
 
-    await program.methods
-      .deposit(SECOND_TOKEN_ID, new anchor.BN(10_000_000))
-      .accounts({
-        owner: user1.publicKey,
-        participantAccount: payerParticipantPda,
-        ownerTokenAccount: payerSecondTokenAccount,
-        vaultTokenAccount: findVaultTokenAccountPda(SECOND_TOKEN_ID),
-      } as any)
-      .signers([user1])
-      .rpc();
+    await depositParticipantBalance({
+      owner: user1,
+      participantPda: undefined,
+      ownerTokenAccount: payerSecondTokenAccount,
+      tokenId: SECOND_TOKEN_ID,
+      amount: 10_000_000,
+    });
 
     const token1Channel = await ensureChannel(user1, user4.publicKey, 1);
     const token2Channel = await ensureChannel(
@@ -69,44 +72,40 @@ describe("Audit Regressions", () => {
     const message = createCommitmentMessage({
       payerId: token2Channel.channel.payerId,
       payeeId: token2Channel.channel.payeeId,
-      amount: nextCommitmentAmount(token2Channel.channel, 1_000_000),
+      committedAmount: nextCommitmentAmount(token2Channel.channel, 1_000_000),
       tokenId: SECOND_TOKEN_ID,
-    });
-
-    const ed25519Ix = Ed25519Program.createInstructionWithPrivateKey({
-      privateKey: user1.secretKey,
-      message,
     });
 
     await expectProgramError(
       () =>
-        program.methods
-          .settleIndividual()
-          .accounts({
-            channelState: token1Channel.channelPda,
-            payerAccount: token1Channel.payerParticipantPda,
-            payeeAccount: token1Channel.payeeParticipantPda,
-            submitter: user4.publicKey,
-          } as any)
-          .preInstructions([ed25519Ix])
-          .signers([user4])
-          .rpc(),
-      "InvalidTokenMint"
+        settleIndividualForTest({
+          ensured: token1Channel,
+          message,
+          signer: user1,
+          submitter: user4,
+        }),
+      "BucketAccountMismatch"
     );
   });
 
   it("rejects Ed25519 instructions that reference message bytes from another instruction", async () => {
-    const { channelPda, payerParticipantPda, payeeParticipantPda } =
-      await ensureChannel(user1, user4.publicKey, 1);
+    const channel = await ensureChannel(user1, user4.publicKey, 1);
 
     const settleIx = await program.methods
       .settleIndividual()
       .accounts({
-        channelState: channelPda,
-        payerAccount: payerParticipantPda,
-        payeeAccount: payeeParticipantPda,
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
         submitter: user4.publicKey,
+        instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
       } as any)
+      .remainingAccounts(
+        individualSettlementRemainingAccounts({
+          payerParticipantPda: channel.payerParticipantPda,
+          payeeParticipantPda: channel.payeeParticipantPda,
+          channelPda: channel.channelPda,
+        })
+      )
       .instruction();
 
     const ed25519Ix = createCrossInstructionMessageEd25519Instruction(
@@ -123,7 +122,6 @@ describe("Audit Regressions", () => {
     );
   });
 
-
   it("rejects executing a withdrawal to a destination different from the requested token account", async () => {
     const participant = await createTestParticipant();
     const legitimateDestination = await createFundedTokenAccount(
@@ -137,48 +135,54 @@ describe("Audit Regressions", () => {
       0
     );
 
-    await program.methods
-      .deposit(1, new anchor.BN(8_000_000))
-      .accounts({
-        owner: participant.wallet.publicKey,
-        participantAccount: participant.participantPda,
-        ownerTokenAccount: legitimateDestination,
-        vaultTokenAccount: findVaultTokenAccountPda(1),
-      } as any)
-      .signers([participant.wallet])
-      .rpc();
+    await depositParticipantBalance({
+      owner: participant.wallet,
+      participantPda: participant.participantPda,
+      ownerTokenAccount: legitimateDestination,
+      tokenId: 1,
+      amount: 8_000_000,
+    });
 
     await program.methods
       .requestWithdrawal(1, new anchor.BN(2_000_000), legitimateDestination)
       .accounts({
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
         owner: participant.wallet.publicKey,
-        participantAccount: participant.participantPda,
+        participantBucket: participant.participantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(participant.wallet.publicKey),
         withdrawalDestination: legitimateDestination,
       } as any)
       .signers([participant.wallet])
       .rpc();
 
-    await sleep(3500);
-
     await expectProgramError(
       () =>
         program.methods
-          .executeWithdrawalTimelocked(1)
+          .executeWithdrawalTimelocked(1, participant.participant.participantId)
           .accounts({
-            participantAccount: participant.participantPda,
+            tokenRegistry: findTokenRegistryPda(),
+            globalConfig: findGlobalConfigPda(),
+            participantBucket: participant.participantPda,
+            vaultTokenAccount: findVaultTokenAccountPda(1),
             withdrawalDestination: attackerDestination,
             feeRecipientTokenAccount: getFeeRecipientTokenAccount(1),
+            tokenProgram: TOKEN_PROGRAM_ID,
           } as any)
           .rpc(),
       "InvalidWithdrawalDestination"
     );
 
     await program.methods
-      .executeWithdrawalTimelocked(1)
+      .executeWithdrawalTimelocked(1, participant.participant.participantId)
       .accounts({
-        participantAccount: participant.participantPda,
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
+        participantBucket: participant.participantPda,
+        vaultTokenAccount: findVaultTokenAccountPda(1),
         withdrawalDestination: legitimateDestination,
         feeRecipientTokenAccount: getFeeRecipientTokenAccount(1),
+        tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
       .rpc();
   });
@@ -193,16 +197,13 @@ describe("Audit Regressions", () => {
     );
     const vaultTokenAccount = findVaultTokenAccountPda(SECOND_TOKEN_ID);
 
-    await program.methods
-      .deposit(SECOND_TOKEN_ID, new anchor.BN(10_000_000))
-      .accounts({
-        owner: participant.wallet.publicKey,
-        participantAccount: participant.participantPda,
-        ownerTokenAccount: destination,
-        vaultTokenAccount,
-      } as any)
-      .signers([participant.wallet])
-      .rpc();
+    await depositParticipantBalance({
+      owner: participant.wallet,
+      participantPda: participant.participantPda,
+      ownerTokenAccount: destination,
+      tokenId: SECOND_TOKEN_ID,
+      amount: 10_000_000,
+    });
 
     await program.methods
       .requestWithdrawal(
@@ -211,49 +212,47 @@ describe("Audit Regressions", () => {
         destination
       )
       .accounts({
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
         owner: participant.wallet.publicKey,
-        participantAccount: participant.participantPda,
+        participantBucket: participant.participantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(participant.wallet.publicKey),
         withdrawalDestination: destination,
       } as any)
       .signers([participant.wallet])
       .rpc();
 
-    await sleep(3500);
-
-    const destinationBefore = (
-      await getAccount(provider.connection, destination)
-    ).amount;
+    const destinationBefore = (await getAccount(provider.connection, destination))
+      .amount;
     const feeRecipientBefore = (
-      await getAccount(
-        provider.connection,
-        secondToken.feeRecipientTokenAccount
-      )
+      await getAccount(provider.connection, secondToken.feeRecipientTokenAccount)
     ).amount;
-    const vaultBefore = (
-      await getAccount(provider.connection, vaultTokenAccount)
-    ).amount;
+    const vaultBefore = (await getAccount(provider.connection, vaultTokenAccount))
+      .amount;
 
     await program.methods
-      .executeWithdrawalTimelocked(SECOND_TOKEN_ID)
+      .executeWithdrawalTimelocked(
+        SECOND_TOKEN_ID,
+        participant.participant.participantId
+      )
       .accounts({
-        participantAccount: participant.participantPda,
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
+        participantBucket: participant.participantPda,
+        vaultTokenAccount,
         withdrawalDestination: destination,
         feeRecipientTokenAccount: secondToken.feeRecipientTokenAccount,
+        tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
       .rpc();
 
-    const destinationAfter = (
-      await getAccount(provider.connection, destination)
-    ).amount;
+    const destinationAfter = (await getAccount(provider.connection, destination))
+      .amount;
     const feeRecipientAfter = (
-      await getAccount(
-        provider.connection,
-        secondToken.feeRecipientTokenAccount
-      )
+      await getAccount(provider.connection, secondToken.feeRecipientTokenAccount)
     ).amount;
-    const vaultAfter = (
-      await getAccount(provider.connection, vaultTokenAccount)
-    ).amount;
+    const vaultAfter = (await getAccount(provider.connection, vaultTokenAccount))
+      .amount;
 
     const netReceived = Number(destinationAfter - destinationBefore);
     const feeReceived = Number(feeRecipientAfter - feeRecipientBefore);
@@ -264,7 +263,7 @@ describe("Audit Regressions", () => {
     expect(vaultDecrease).to.equal(netReceived + feeReceived);
   });
 
-  it("rejects registering tokens with unsupported decimals", async () => {
+  it("rejects registering tokens with unsupported decimals or non-ASCII symbols", async () => {
     const highDecimalMint = await createMint(
       provider.connection,
       deployer,
@@ -288,9 +287,7 @@ describe("Audit Regressions", () => {
           .rpc(),
       "InvalidTokenDecimals"
     );
-  });
 
-  it("rejects registering tokens with non-ASCII symbols", async () => {
     const mint = await createMint(
       provider.connection,
       deployer,
@@ -326,16 +323,13 @@ describe("Audit Regressions", () => {
       5_000_000
     );
 
-    await program.methods
-      .deposit(SECOND_TOKEN_ID, new anchor.BN(2_000_000))
-      .accounts({
-        owner: payer.wallet.publicKey,
-        participantAccount: payer.participantPda,
-        ownerTokenAccount: payerTokenAccount,
-        vaultTokenAccount: findVaultTokenAccountPda(SECOND_TOKEN_ID),
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await depositParticipantBalance({
+      owner: payer.wallet,
+      participantPda: payer.participantPda,
+      ownerTokenAccount: payerTokenAccount,
+      tokenId: SECOND_TOKEN_ID,
+      amount: 2_000_000,
+    });
 
     const channel = await ensureChannel(
       payer.wallet,
@@ -343,353 +337,50 @@ describe("Audit Regressions", () => {
       SECOND_TOKEN_ID
     );
 
-    await program.methods
-      .lockChannelFunds(SECOND_TOKEN_ID, new anchor.BN(500_000))
-      .accounts({
-        payerAccount: channel.payerParticipantPda,
-        payeeAccount: channel.payeeParticipantPda,
-        channelState: channel.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
-
-    await program.methods
-      .requestUnlockChannelFunds(SECOND_TOKEN_ID, new anchor.BN(200_000))
-      .accounts({
-        globalConfig: PublicKey.findProgramAddressSync(
-          [Buffer.from("global-config")],
-          program.programId
-        )[0],
-        payerAccount: channel.payerParticipantPda,
-        payeeAccount: channel.payeeParticipantPda,
-        channelState: channel.channelPda,
-        owner: payer.wallet.publicKey,
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await lockChannelFundsForTest(channel, 500_000, payer.wallet, SECOND_TOKEN_ID);
+    await requestUnlockChannelFundsForTest(
+      channel,
+      200_000,
+      payer.wallet,
+      SECOND_TOKEN_ID
+    );
 
     await sleep(3500);
 
     await expectProgramError(
       () =>
         program.methods
-          .executeUnlockChannelFunds(1)
+          .executeUnlockChannelFunds(1, channel.payeeParticipant.participantId)
           .accounts({
-            globalConfig: PublicKey.findProgramAddressSync(
-              [Buffer.from("global-config")],
-              program.programId
-            )[0],
-            payerAccount: channel.payerParticipantPda,
-            payeeAccount: channel.payeeParticipantPda,
-            channelState: channel.channelPda,
+            globalConfig: findGlobalConfigPda(),
+            payerBucket: channel.payerParticipantPda,
+            channelBucket: channel.channelPda,
+            ownerIndexBucket: findOwnerIndexBucketPda(payer.wallet.publicKey),
             owner: payer.wallet.publicKey,
           } as any)
           .signers([payer.wallet])
           .rpc(),
-      "InvalidTokenMint"
+      "BucketAccountMismatch"
     );
 
     await program.methods
-      .executeUnlockChannelFunds(SECOND_TOKEN_ID)
+      .executeUnlockChannelFunds(
+        SECOND_TOKEN_ID,
+        channel.payeeParticipant.participantId
+      )
       .accounts({
-        globalConfig: PublicKey.findProgramAddressSync(
-          [Buffer.from("global-config")],
-          program.programId
-        )[0],
-        payerAccount: channel.payerParticipantPda,
-        payeeAccount: channel.payeeParticipantPda,
-        channelState: channel.channelPda,
+        globalConfig: findGlobalConfigPda(),
+        payerBucket: channel.payerParticipantPda,
+        channelBucket: channel.channelPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(payer.wallet.publicKey),
         owner: payer.wallet.publicKey,
       } as any)
       .signers([payer.wallet])
       .rpc();
   });
 
-  it("allows back-to-back multilateral rounds when target cumulatives keep increasing", async () => {
-    const participantA = await createTestParticipant();
-    const participantB = await createTestParticipant();
-    const participantATokenAccount = await createFundedTokenAccount(
-      participantA.wallet,
-      primaryMint,
-      8_000_000
-    );
-    const participantBTokenAccount = await createFundedTokenAccount(
-      participantB.wallet,
-      primaryMint,
-      8_000_000
-    );
-
-    await program.methods
-      .deposit(1, new anchor.BN(4_000_000))
-      .accounts({
-        owner: participantA.wallet.publicKey,
-        participantAccount: participantA.participantPda,
-        ownerTokenAccount: participantATokenAccount,
-        vaultTokenAccount: findVaultTokenAccountPda(1),
-      } as any)
-      .signers([participantA.wallet])
-      .rpc();
-
-    await program.methods
-      .deposit(1, new anchor.BN(4_000_000))
-      .accounts({
-        owner: participantB.wallet.publicKey,
-        participantAccount: participantB.participantPda,
-        ownerTokenAccount: participantBTokenAccount,
-        vaultTokenAccount: findVaultTokenAccountPda(1),
-      } as any)
-      .signers([participantB.wallet])
-      .rpc();
-
-    const channelAB = await ensureChannel(
-      participantA.wallet,
-      participantB.wallet.publicKey,
-      1
-    );
-    const channelBA = await ensureChannel(
-      participantB.wallet,
-      participantA.wallet.publicKey,
-      1
-    );
-
-    const buildMessage = async (grossAmount: number) => {
-      const currentAB = await program.account.channelState.fetch(
-        channelAB.channelPda
-      );
-      const currentBA = await program.account.channelState.fetch(
-        channelBA.channelPda
-      );
-      return createClearingRoundMessage({
-        tokenId: 1,
-        blocks: [
-          {
-            participantId: channelAB.payerParticipant.participantId,
-            entries: [
-              {
-                payeeRef: 1,
-                targetCumulative: new anchor.BN(
-                  currentAB.settledCumulative.toString()
-                ).add(new anchor.BN(grossAmount)),
-              },
-            ],
-          },
-          {
-            participantId: channelBA.payerParticipant.participantId,
-            entries: [
-              {
-                payeeRef: 0,
-                targetCumulative: new anchor.BN(
-                  currentBA.settledCumulative.toString()
-                ).add(new anchor.BN(grossAmount)),
-              },
-            ],
-          },
-        ],
-      });
-    };
-
-    const firstMessage = await buildMessage(750_000);
-    await program.methods
-      .settleClearingRound()
-      .accounts({
-        submitter: participantA.wallet.publicKey,
-      } as any)
-      .remainingAccounts([
-        {
-          pubkey: participantA.participantPda,
-          isSigner: false,
-          isWritable: true,
-        },
-        {
-          pubkey: participantB.participantPda,
-          isSigner: false,
-          isWritable: true,
-        },
-        { pubkey: channelAB.channelPda, isSigner: false, isWritable: true },
-        { pubkey: channelBA.channelPda, isSigner: false, isWritable: true },
-      ])
-      .preInstructions([
-        createMultiSigEd25519Instruction(
-          [participantA.wallet, participantB.wallet],
-          firstMessage
-        ),
-      ])
-      .signers([participantA.wallet])
-      .rpc();
-
-    const secondMessage = await buildMessage(500_000);
-    await program.methods
-      .settleClearingRound()
-      .accounts({
-        submitter: participantA.wallet.publicKey,
-      } as any)
-      .remainingAccounts([
-        {
-          pubkey: participantA.participantPda,
-          isSigner: false,
-          isWritable: true,
-        },
-        {
-          pubkey: participantB.participantPda,
-          isSigner: false,
-          isWritable: true,
-        },
-        { pubkey: channelAB.channelPda, isSigner: false, isWritable: true },
-        { pubkey: channelBA.channelPda, isSigner: false, isWritable: true },
-      ])
-      .preInstructions([
-        createMultiSigEd25519Instruction(
-          [participantA.wallet, participantB.wallet],
-          secondMessage
-        ),
-      ])
-      .signers([participantA.wallet])
-      .rpc();
-
-    const finalChannelAB = await program.account.channelState.fetch(
-      channelAB.channelPda
-    );
-    const finalChannelBA = await program.account.channelState.fetch(
-      channelBA.channelPda
-    );
-
-    expect(finalChannelAB.settledCumulative.toNumber()).to.equal(
-      channelAB.channel.settledCumulative.toNumber() + 1_250_000
-    );
-    expect(finalChannelBA.settledCumulative.toNumber()).to.equal(
-      channelBA.channel.settledCumulative.toNumber() + 1_250_000
-    );
-  });
-
-  it("rejects multilateral rounds that omit a participant who would receive a net credit", async () => {
-    const participantA = await createTestParticipant();
-    const participantB = await createTestParticipant();
-    const participantATokenAccount = await createFundedTokenAccount(
-      participantA.wallet,
-      primaryMint,
-      4_000_000
-    );
-
-    await program.methods
-      .deposit(1, new anchor.BN(2_000_000))
-      .accounts({
-        owner: participantA.wallet.publicKey,
-        participantAccount: participantA.participantPda,
-        ownerTokenAccount: participantATokenAccount,
-        vaultTokenAccount: findVaultTokenAccountPda(1),
-      } as any)
-      .signers([participantA.wallet])
-      .rpc();
-
-    const channelAB = await ensureChannel(
-      participantA.wallet,
-      participantB.wallet.publicKey,
-      1
-    );
-    const currentAB = await program.account.channelState.fetch(
-      channelAB.channelPda
-    );
-
-    const message = createClearingRoundMessage({
-      tokenId: 1,
-      blocks: [
-        {
-          participantId: channelAB.payerParticipant.participantId,
-          entries: [
-            {
-              payeeRef: 1,
-              targetCumulative: new anchor.BN(
-                currentAB.settledCumulative.toString()
-              ).add(new anchor.BN(750_000)),
-            },
-          ],
-        },
-      ],
-    });
-
-    await expectProgramError(
-      () =>
-        program.methods
-          .settleClearingRound()
-          .accounts({
-            submitter: participantA.wallet.publicKey,
-          } as any)
-          .remainingAccounts([
-            {
-              pubkey: participantA.participantPda,
-              isSigner: false,
-              isWritable: true,
-            },
-            { pubkey: channelAB.channelPda, isSigner: false, isWritable: true },
-          ])
-          .preInstructions([
-            createMultiSigEd25519Instruction([participantA.wallet], message),
-          ])
-          .signers([participantA.wallet])
-          .rpc(),
-      "InvalidClearingRoundMessage"
-    );
-  });
-
-  it("rejects clearing rounds signed for a different message domain", async () => {
-    const channel = await ensureChannel(user1, user4.publicKey, 1);
-    const message = createClearingRoundMessage({
-      tokenId: 1,
-      messageDomain: Buffer.alloc(16, 5),
-      blocks: [
-        {
-          participantId: channel.payerParticipant.participantId,
-          entries: [
-            {
-              payeeRef: 1,
-              targetCumulative: new anchor.BN(
-                channel.channel.settledCumulative.toString()
-              ).add(new anchor.BN(250_000)),
-            },
-          ],
-        },
-        {
-          participantId: channel.payeeParticipant.participantId,
-          entries: [],
-        },
-      ],
-    });
-
-    await expectProgramError(
-      () =>
-        program.methods
-          .settleClearingRound()
-          .accounts({
-            submitter: user1.publicKey,
-          } as any)
-          .remainingAccounts([
-            {
-              pubkey: channel.payerParticipantPda,
-              isSigner: false,
-              isWritable: true,
-            },
-            {
-              pubkey: channel.payeeParticipantPda,
-              isSigner: false,
-              isWritable: true,
-            },
-            { pubkey: channel.channelPda, isSigner: false, isWritable: true },
-          ])
-          .preInstructions([
-            createMultiSigEd25519Instruction([user1, user4], message),
-          ])
-          .signers([user1])
-          .rpc(),
-      "InvalidMessageDomain"
-    );
-  });
-
   it("uses a two-step token registry authority handoff", async () => {
-    const [tokenRegistryPda] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("token-registry")],
-      program.programId
-    );
+    const tokenRegistryPda = findTokenRegistryPda();
     const newAuthority = anchor.web3.Keypair.generate();
     await provider.connection.confirmTransaction(
       await provider.connection.requestAirdrop(
@@ -762,11 +453,6 @@ describe("Audit Regressions", () => {
       } as any)
       .signers([deployer])
       .rpc();
-
-    registry = await program.account.tokenRegistry.fetch(tokenRegistryPda);
-    expect(registry.authority.toString()).to.equal(
-      deployer.publicKey.toString()
-    );
   });
 
   it("emits token_id on deposit events for allowlisted tokens", async () => {
@@ -781,10 +467,14 @@ describe("Audit Regressions", () => {
     const signature = await program.methods
       .deposit(EVENT_TOKEN_ID, new anchor.BN(1_000_000))
       .accounts({
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
         owner: participant.wallet.publicKey,
-        participantAccount: participant.participantPda,
+        participantBucket: participant.participantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(participant.wallet.publicKey),
         ownerTokenAccount: participantTokenAccount,
         vaultTokenAccount: findVaultTokenAccountPda(EVENT_TOKEN_ID),
+        tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
       .signers([participant.wallet])
       .rpc();
@@ -811,16 +501,33 @@ describe("Audit Regressions", () => {
       payee.participant.participantId,
       CHANNEL_EVENT_TOKEN_ID
     );
+    const { lowerParticipantId, higherParticipantId } =
+      getCanonicalChannelParticipants(
+        payer.participant.participantId,
+        payee.participant.participantId
+      );
 
     const signature = await program.methods
-      .createChannel(CHANNEL_EVENT_TOKEN_ID, null)
+      .createChannel(
+        CHANNEL_EVENT_TOKEN_ID,
+        lowerParticipantId,
+        higherParticipantId,
+        new anchor.BN(
+          channelBucketIdForPair(
+            payer.participant.participantId,
+            payee.participant.participantId
+          )
+        ),
+        null
+      )
       .accounts({
         tokenRegistry: findTokenRegistryPda(),
         owner: payer.wallet.publicKey,
-        payerAccount: payer.participantPda,
-        payeeAccount: payee.participantPda,
+        payerBucket: payer.participantPda,
+        payeeBucket: payee.participantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(payer.wallet.publicKey),
         payeeOwner: payee.wallet.publicKey,
-        channelState: channelPda,
+        channelBucket: channelPda,
         systemProgram: SystemProgram.programId,
       } as any)
       .signers([payer.wallet, payee.wallet])

@@ -19,7 +19,7 @@ pub enum VaultError {
     #[msg("No withdrawal is currently pending")]
     NoWithdrawalPending,
     /// Retriable: Wait until unlock_at.
-    #[msg("Withdrawal timelock has not yet expired")]
+    #[msg("Unlock timelock has not yet expired")]
     WithdrawalLocked,
     /// Permanent: Zero address or invalid token account.
     #[msg("Invalid withdrawal destination address")]
@@ -70,6 +70,20 @@ pub enum VaultError {
     InvalidMessageDomain,
     #[msg("Ed25519 signature verification failed")]
     InvalidSignature,
+    #[msg("Invalid BLS public key")]
+    InvalidBlsPublicKey,
+    #[msg("Invalid BLS aggregate signature")]
+    InvalidBlsSignature,
+    #[msg("Invalid BLS proof of possession")]
+    InvalidBlsProofOfPossession,
+    #[msg("Participant inline BLS key is not registered")]
+    ParticipantBlsKeyNotFound,
+    #[msg("Participant already has a registered BLS key")]
+    ParticipantBlsKeyAlreadyRegistered,
+    #[msg("BLS key registration does not match the participant")]
+    AccountBlsKeyMismatch,
+    #[msg("BLS syscall failed or is unavailable on this cluster")]
+    BlsSyscallFailed,
     #[msg("CPI calls to settlement instructions are not allowed")]
     CpiNotAllowed,
     #[msg("Invalid Ed25519 instruction data")]
@@ -84,6 +98,8 @@ pub enum VaultError {
     UnauthorizedSettler,
     #[msg("Payee consent is required to create this inbound channel")]
     InboundChannelConsentRequired,
+    #[msg("Counterparty consent is required for cooperative channel unlock")]
+    CounterpartyConsentRequired,
     #[msg("This participant does not accept inbound channels")]
     InboundChannelsDisabled,
     #[msg("Self-channels are not allowed")]
@@ -130,4 +146,14 @@ pub enum VaultError {
     InvalidAuthorizedSigner,
     #[msg("No authorized signer update is currently pending")]
     NoAuthorizedSignerUpdatePending,
+    #[msg("Bucket account does not match the expected bucket id or PDA")]
+    BucketAccountMismatch,
+    #[msg("Bucket slot does not match the expected logical row")]
+    BucketSlotMismatch,
+    #[msg("Bucket slot is already initialized")]
+    BucketSlotAlreadyInitialized,
+    #[msg("Bucket has no remaining free slots")]
+    BucketFull,
+    #[msg("Owner is already registered")]
+    OwnerAlreadyRegistered,
 }

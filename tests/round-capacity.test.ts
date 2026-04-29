@@ -6,78 +6,86 @@ import {
   measureClearingRoundCapacity,
 } from "../scripts/lib/clearing-round-capacity";
 
-describe("Clearing round capacity sizing", function () {
+describe("BLS clearing round capacity sizing", function () {
   this.timeout(30_000);
   const programId = new PublicKey("11111111111111111111111111111111");
   const maxParticipants = 16;
 
-  it("shows the current compact self-contained Ed25519 path fits a 3-party cycle", () => {
+  it("models the canonical BLS v0 + ALT path", () => {
     const threeParticipantCycle = measureClearingRoundCapacity({
       programId,
-      mode: "current-ed25519",
+      mode: "bls-v0-alt",
       participantCount: 3,
       channelCount: 3,
     });
 
     expect(threeParticipantCycle.fits).to.equal(true);
+    expect(threeParticipantCycle.participantBucketCount).to.equal(1);
+    expect(threeParticipantCycle.channelBucketCount).to.equal(1);
   });
 
-  it("shows v0 + ALT improves current clearing-round capacity before BLS", () => {
-    const currentOverall = findLargestOverallRound({
-      programId,
-      mode: "current-ed25519",
-      maxParticipants,
-    });
-    const currentV0AltOverall = findLargestOverallRound({
-      programId,
-      mode: "current-ed25519-v0-alt",
-      maxParticipants,
-    });
-
-    expect(currentV0AltOverall.fits).to.equal(true);
-    expect(currentV0AltOverall.channelCount).to.be.greaterThan(
-      currentOverall.channelCount
-    );
-  });
-
-  it("shows aggregate-signature sizing materially increases round capacity", () => {
-    const currentCycle = findLargestCycleRound({
-      programId,
-      mode: "current-ed25519",
-      maxParticipants,
-    });
-    const blsCycle = findLargestCycleRound({
-      programId,
-      mode: "hypothetical-bls",
-      maxParticipants,
-    });
-    const currentOverall = findLargestOverallRound({
-      programId,
-      mode: "current-ed25519",
-      maxParticipants,
-    });
+  it("shows v0 + ALT improves BLS packet capacity", () => {
     const blsOverall = findLargestOverallRound({
       programId,
-      mode: "hypothetical-bls",
+      mode: "bls",
       maxParticipants,
     });
     const blsV0AltOverall = findLargestOverallRound({
       programId,
-      mode: "hypothetical-bls-v0-alt",
+      mode: "bls-v0-alt",
       maxParticipants,
     });
 
-    expect(currentCycle.fits).to.equal(true);
-    expect(blsCycle.fits).to.equal(true);
-    expect(blsCycle.participantCount).to.be.greaterThan(
-      currentCycle.participantCount
-    );
-    expect(blsOverall.fits).to.equal(true);
-    expect(blsOverall.channelCount).to.be.greaterThan(
-      currentOverall.channelCount
-    );
+    expect(blsV0AltOverall.fits).to.equal(true);
     expect(blsV0AltOverall.channelCount).to.be.greaterThan(
       blsOverall.channelCount
     );
+  });
+
+  it("finds balanced and overall BLS capacity ceilings", () => {
+    const blsCycle = findLargestCycleRound({
+      programId,
+      mode: "bls-v0-alt",
+      maxParticipants,
+    });
+    const blsOverall = findLargestOverallRound({
+      programId,
+      mode: "bls-v0-alt",
+      maxParticipants,
+    });
+
+    expect(blsCycle.fits).to.equal(true);
+    expect(blsOverall.fits).to.equal(true);
+    expect(blsOverall.channelCount).to.be.greaterThanOrEqual(
+      blsCycle.channelCount
+    );
+  });
+
+  it("models bucketed BLS clearing locks as participant buckets plus channel buckets", () => {
+    const denseHundredParticipantRound = measureClearingRoundCapacity({
+      programId,
+      mode: "bls-v0-alt",
+      participantCount: 100,
+      channelCount: 9_900,
+    });
+    const reciprocalSixtyFourParticipantRound = measureClearingRoundCapacity({
+      programId,
+      mode: "bls-v0-alt",
+      participantCount: 64,
+      channelCount: 128,
+    });
+
+    expect(denseHundredParticipantRound.participantBucketCount).to.equal(2);
+    expect(denseHundredParticipantRound.channelBucketCount).to.equal(39);
+    expect(denseHundredParticipantRound.dynamicWritableAccountCount).to.equal(
+      41
+    );
+    expect(reciprocalSixtyFourParticipantRound.participantBucketCount).to.equal(
+      1
+    );
+    expect(reciprocalSixtyFourParticipantRound.channelBucketCount).to.equal(16);
+    expect(
+      reciprocalSixtyFourParticipantRound.dynamicWritableAccountCount
+    ).to.equal(17);
   });
 });

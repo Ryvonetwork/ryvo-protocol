@@ -1,5 +1,5 @@
 import * as anchor from "@coral-xyz/anchor";
-import { Ed25519Program, PublicKey } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAccount } from "@solana/spl-token";
 import { expect } from "chai";
 import {
@@ -9,10 +9,15 @@ import {
   user1,
   user1TokenAccount,
   feeRecipientTokenAccount,
+  depositParticipantBalance,
+  fetchParticipant,
+  findGlobalConfigPda,
+  findOwnerIndexBucketPda,
   findParticipantPda,
+  findTokenRegistryPda,
   findVaultTokenAccountPda,
   getTokenBalance,
-  sleep,
+  knownParticipantId,
   registerTestToken,
   createFundedTokenAccount,
   getFeeRecipientTokenAccount,
@@ -20,6 +25,8 @@ import {
   ensureChannel,
   createCommitmentMessage,
   expectProgramError,
+  participantBucketMetasForOwners,
+  settleIndividualForTest,
 } from "./shared/setup";
 
 const SECOND_WITHDRAWAL_TOKEN_ID = 12;
@@ -32,16 +39,17 @@ describe("Withdrawal", () => {
     await program.methods
       .requestWithdrawal(1, new anchor.BN(withdrawAmount), user1TokenAccount) // token_id = 1
       .accounts({
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
         owner: user1.publicKey,
-        participantAccount: participantPda,
+        participantBucket: participantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(user1.publicKey),
         withdrawalDestination: user1TokenAccount,
       } as any)
       .signers([user1])
       .rpc();
 
-    const participant = await program.account.participantAccount.fetch(
-      participantPda
-    );
+    const participant = await fetchParticipant(user1.publicKey);
     const primaryTokenBalance = getTokenBalance(participant, 1);
     expect(primaryTokenBalance.withdrawingBalance.toNumber()).to.equal(withdrawAmount);
     expect(primaryTokenBalance.withdrawalUnlockAt.toNumber()).to.be.greaterThan(0);
@@ -50,22 +58,15 @@ describe("Withdrawal", () => {
     );
   });
 
-  it("should reject execute_withdrawal before timelock", async () => {
-    const participantPda = findParticipantPda(user1.publicKey);
+  it("should make requested withdrawals executable immediately", async () => {
+    const participant = await fetchParticipant(user1.publicKey);
+    const primaryTokenBalance = getTokenBalance(participant, 1);
+    const now = Math.floor(Date.now() / 1000);
 
-    try {
-      await program.methods
-        .executeWithdrawalTimelocked(1) // token_id = 1 (primary token)
-        .accounts({
-          participantAccount: participantPda,
-          withdrawalDestination: user1TokenAccount,
-          feeRecipientTokenAccount: feeRecipientTokenAccount,
-        } as any)
-        .rpc();
-      expect.fail("Should have thrown WithdrawalLocked");
-    } catch (e: any) {
-      expect(e.message || e.toString()).to.include("WithdrawalLocked");
-    }
+    expect(primaryTokenBalance.withdrawingBalance.toNumber()).to.be.greaterThan(0);
+    expect(primaryTokenBalance.withdrawalUnlockAt.toNumber()).to.be.at.most(
+      now + 5
+    );
   });
 
   it("should cancel withdrawal", async () => {
@@ -74,21 +75,21 @@ describe("Withdrawal", () => {
     await program.methods
       .cancelWithdrawal(1) // token_id = 1 (primary token)
       .accounts({
+        participantBucket: participantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(user1.publicKey),
         owner: user1.publicKey,
       } as any)
       .signers([user1])
       .rpc();
 
-    const participant = await program.account.participantAccount.fetch(
-      participantPda
-    );
+    const participant = await fetchParticipant(user1.publicKey);
     const primaryTokenBalance = getTokenBalance(participant, 1);
     expect(primaryTokenBalance.withdrawingBalance.toNumber()).to.equal(0);
     expect(primaryTokenBalance.withdrawalUnlockAt.toNumber()).to.equal(0);
     expect(primaryTokenBalance.availableBalance.toNumber()).to.be.greaterThan(0);
   });
 
-  it("should request withdrawal and execute after timelock", async () => {
+  it("should request withdrawal and execute immediately", async () => {
     const participantPda = findParticipantPda(user1.publicKey);
     const vaultTokenAccount = findVaultTokenAccountPda(1);
     const withdrawAmount = 10_000_000; // 10 primary-token units
@@ -96,15 +97,15 @@ describe("Withdrawal", () => {
     await program.methods
       .requestWithdrawal(1, new anchor.BN(withdrawAmount), user1TokenAccount) // token_id = 1
       .accounts({
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
         owner: user1.publicKey,
-        participantAccount: participantPda,
+        participantBucket: participantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(user1.publicKey),
         withdrawalDestination: user1TokenAccount,
       } as any)
       .signers([user1])
       .rpc();
-
-    // Wait for timelock (2s on devnet)
-    await sleep(3500);
 
     const user1BalanceBefore = (
       await getAccount(provider.connection, user1TokenAccount)
@@ -117,17 +118,19 @@ describe("Withdrawal", () => {
     ).amount;
 
     await program.methods
-      .executeWithdrawalTimelocked(1) // token_id = 1 (primary token)
+      .executeWithdrawalTimelocked(1, knownParticipantId(user1.publicKey)) // token_id = 1 (primary token)
       .accounts({
-        participantAccount: participantPda,
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
+        participantBucket: participantPda,
+        vaultTokenAccount,
         withdrawalDestination: user1TokenAccount,
         feeRecipientTokenAccount: feeRecipientTokenAccount,
+        tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
       .rpc();
 
-    const participant = await program.account.participantAccount.fetch(
-      participantPda
-    );
+    const participant = await fetchParticipant(user1.publicKey);
     const primaryTokenBalance = getTokenBalance(participant, 1);
     expect(primaryTokenBalance.withdrawingBalance.toNumber()).to.equal(0);
     expect(primaryTokenBalance.withdrawalUnlockAt.toNumber()).to.equal(0);
@@ -171,16 +174,13 @@ describe("Withdrawal", () => {
     );
     const withdrawAmount = 4_000_000;
 
-    await program.methods
-      .deposit(SECOND_WITHDRAWAL_TOKEN_ID, new anchor.BN(6_000_000))
-      .accounts({
-        owner: user1.publicKey,
-        participantAccount: participantPda,
-        ownerTokenAccount: destination,
-        vaultTokenAccount,
-      } as any)
-      .signers([user1])
-      .rpc();
+    await depositParticipantBalance({
+      owner: user1,
+      participantPda,
+      ownerTokenAccount: destination,
+      tokenId: SECOND_WITHDRAWAL_TOKEN_ID,
+      amount: 6_000_000,
+    });
 
     await program.methods
       .requestWithdrawal(
@@ -189,14 +189,15 @@ describe("Withdrawal", () => {
         destination
       )
       .accounts({
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
         owner: user1.publicKey,
-        participantAccount: participantPda,
+        participantBucket: participantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(user1.publicKey),
         withdrawalDestination: destination,
       } as any)
       .signers([user1])
       .rpc();
-
-    await sleep(3500);
 
     const destinationBefore = (await getAccount(provider.connection, destination)).amount;
     const feeRecipientBefore = (
@@ -208,19 +209,24 @@ describe("Withdrawal", () => {
     const vaultBefore = (await getAccount(provider.connection, vaultTokenAccount)).amount;
 
     await program.methods
-      .executeWithdrawalTimelocked(SECOND_WITHDRAWAL_TOKEN_ID)
+      .executeWithdrawalTimelocked(
+        SECOND_WITHDRAWAL_TOKEN_ID,
+        knownParticipantId(user1.publicKey)
+      )
       .accounts({
-        participantAccount: participantPda,
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
+        participantBucket: participantPda,
+        vaultTokenAccount,
         withdrawalDestination: destination,
         feeRecipientTokenAccount: getFeeRecipientTokenAccount(
           SECOND_WITHDRAWAL_TOKEN_ID
         ),
+        tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
       .rpc();
 
-    const participant = await program.account.participantAccount.fetch(
-      participantPda
-    );
+    const participant = await fetchParticipant(user1.publicKey);
     const secondTokenBalance = getTokenBalance(
       participant,
       SECOND_WITHDRAWAL_TOKEN_ID
@@ -255,10 +261,14 @@ describe("Withdrawal", () => {
         program.methods
           .deposit(1, new anchor.BN(1_000_000))
           .accounts({
+            tokenRegistry: findTokenRegistryPda(),
+            globalConfig: findGlobalConfigPda(),
             owner: participant.wallet.publicKey,
-            participantAccount: participant.participantPda,
+            participantBucket: participant.participantPda,
+            ownerIndexBucket: findOwnerIndexBucketPda(participant.wallet.publicKey),
             ownerTokenAccount: wrongMintAccount,
             vaultTokenAccount: findVaultTokenAccountPda(1),
+            tokenProgram: TOKEN_PROGRAM_ID,
           } as any)
           .signers([participant.wallet])
           .rpc(),
@@ -278,18 +288,22 @@ describe("Withdrawal", () => {
     await expectProgramError(
       () =>
         program.methods
-          .depositFor(1, [new anchor.BN(1_000_000)])
+          .depositFor(
+            1,
+            [participant.participant.participantId],
+            [new anchor.BN(1_000_000)]
+          )
           .accounts({
+            tokenRegistry: findTokenRegistryPda(),
+            globalConfig: findGlobalConfigPda(),
             funderTokenAccount: wrongMintAccount,
+            vaultTokenAccount: findVaultTokenAccountPda(1),
             funder: participant.wallet.publicKey,
+            tokenProgram: TOKEN_PROGRAM_ID,
           } as any)
-          .remainingAccounts([
-            {
-              pubkey: participant.participantPda,
-              isSigner: false,
-              isWritable: true,
-            },
-          ])
+          .remainingAccounts(
+            participantBucketMetasForOwners([participant.wallet.publicKey])
+          )
           .signers([participant.wallet])
           .rpc(),
       "InvalidTokenMint"
@@ -310,24 +324,24 @@ describe("Withdrawal", () => {
       0
     );
 
-    await program.methods
-      .deposit(1, new anchor.BN(2_000_000))
-      .accounts({
-        owner: participant.wallet.publicKey,
-        participantAccount: participant.participantPda,
-        ownerTokenAccount: tokenAccount,
-        vaultTokenAccount: findVaultTokenAccountPda(1),
-      } as any)
-      .signers([participant.wallet])
-      .rpc();
+    await depositParticipantBalance({
+      owner: participant.wallet,
+      participantPda: participant.participantPda,
+      ownerTokenAccount: tokenAccount,
+      tokenId: 1,
+      amount: 2_000_000,
+    });
 
     await expectProgramError(
       () =>
         program.methods
           .requestWithdrawal(1, new anchor.BN(1_000_000), wrongDestination)
           .accounts({
+            tokenRegistry: findTokenRegistryPda(),
+            globalConfig: findGlobalConfigPda(),
             owner: participant.wallet.publicKey,
-            participantAccount: participant.participantPda,
+            participantBucket: participant.participantPda,
+            ownerIndexBucket: findOwnerIndexBucketPda(participant.wallet.publicKey),
             withdrawalDestination: wrongDestination,
           } as any)
           .signers([participant.wallet])
@@ -348,22 +362,22 @@ describe("Withdrawal", () => {
       await ensureChannel(payer.wallet, payee.wallet.publicKey, 1);
     const withdrawAmount = 2_000_000;
 
-    await program.methods
-      .deposit(1, new anchor.BN(withdrawAmount))
-      .accounts({
-        owner: payer.wallet.publicKey,
-        participantAccount: payerParticipantPda,
-        ownerTokenAccount: payerTokenAccount,
-        vaultTokenAccount: findVaultTokenAccountPda(1),
-      } as any)
-      .signers([payer.wallet])
-      .rpc();
+    await depositParticipantBalance({
+      owner: payer.wallet,
+      participantPda: payerParticipantPda,
+      ownerTokenAccount: payerTokenAccount,
+      tokenId: 1,
+      amount: withdrawAmount,
+    });
 
     await program.methods
       .requestWithdrawal(1, new anchor.BN(withdrawAmount), payerTokenAccount)
       .accounts({
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
         owner: payer.wallet.publicKey,
-        participantAccount: payerParticipantPda,
+        participantBucket: payerParticipantPda,
+        ownerIndexBucket: findOwnerIndexBucketPda(payer.wallet.publicKey),
         withdrawalDestination: payerTokenAccount,
       } as any)
       .signers([payer.wallet])
@@ -375,32 +389,22 @@ describe("Withdrawal", () => {
       committedAmount: new anchor.BN(withdrawAmount),
       tokenId: 1,
     });
-    const ed25519Ix = Ed25519Program.createInstructionWithPrivateKey({
-      privateKey: payer.wallet.secretKey,
+    await settleIndividualForTest({
+      ensured: {
+        channelPda,
+        payerParticipantPda,
+        payeeParticipantPda,
+      } as any,
       message: commitmentMessage,
+      signer: payer.wallet,
+      submitter: payee.wallet,
     });
 
-    await program.methods
-      .settleIndividual()
-      .accounts({
-        channelState: channelPda,
-        payerAccount: payerParticipantPda,
-        payeeAccount: payeeParticipantPda,
-        submitter: payee.wallet.publicKey,
-      } as any)
-      .preInstructions([ed25519Ix])
-      .signers([payee.wallet])
-      .rpc();
-
-    const payerAfterSettlement = await program.account.participantAccount.fetch(
-      payerParticipantPda
-    );
+    const payerAfterSettlement = await fetchParticipant(payer.wallet.publicKey);
     const drainedBalance = getTokenBalance(payerAfterSettlement, 1);
     expect(drainedBalance.availableBalance.toNumber()).to.equal(0);
     expect(drainedBalance.withdrawingBalance.toNumber()).to.equal(0);
     expect(drainedBalance.withdrawalUnlockAt.toNumber()).to.be.greaterThan(0);
-
-    await sleep(3500);
 
     const destinationBefore = (await getAccount(provider.connection, payerTokenAccount)).amount;
     const feeRecipientBefore = (
@@ -411,11 +415,15 @@ describe("Withdrawal", () => {
     ).amount;
 
     await program.methods
-      .executeWithdrawalTimelocked(1)
+      .executeWithdrawalTimelocked(1, payer.participant.participantId)
       .accounts({
-        participantAccount: payerParticipantPda,
+        tokenRegistry: findTokenRegistryPda(),
+        globalConfig: findGlobalConfigPda(),
+        participantBucket: payerParticipantPda,
+        vaultTokenAccount: findVaultTokenAccountPda(1),
         withdrawalDestination: payerTokenAccount,
         feeRecipientTokenAccount: feeRecipientTokenAccount,
+        tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
       .rpc();
 
@@ -426,9 +434,7 @@ describe("Withdrawal", () => {
     const vaultAfter = (
       await getAccount(provider.connection, findVaultTokenAccountPda(1))
     ).amount;
-    const payerAfterExecution = await program.account.participantAccount.fetch(
-      payerParticipantPda
-    );
+    const payerAfterExecution = await fetchParticipant(payer.wallet.publicKey);
     const clearedBalance = getTokenBalance(payerAfterExecution, 1);
 
     expect(Number(destinationAfter - destinationBefore)).to.equal(0);

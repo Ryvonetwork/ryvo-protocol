@@ -2,45 +2,92 @@ use anchor_lang::prelude::*;
 
 use crate::errors::VaultError;
 use crate::events::ChannelFundsUnlocked;
-use crate::state::{ChannelState, GlobalConfig, ParticipantAccount};
+use crate::state::{ChannelBucket, GlobalConfig, OwnerIndexBucket, ParticipantBucket};
 
-pub fn handler(ctx: Context<ExecuteUnlockChannelFunds>, token_id: u16) -> Result<()> {
-    let channel = &mut ctx.accounts.channel_state;
-    require!(channel.token_id == token_id, VaultError::InvalidTokenMint);
+pub fn handler(
+    ctx: Context<ExecuteUnlockChannelFunds>,
+    token_id: u16,
+    payee_participant_id: u32,
+) -> Result<()> {
+    let owner = ctx.accounts.owner.key();
+    let payer_id = ctx
+        .accounts
+        .owner_index_bucket
+        .participant_id_for_verified_owner(
+            &ctx.accounts.owner_index_bucket.key(),
+            &owner,
+            ctx.program_id,
+        )?;
+    let (lower_id, higher_id, _) = ChannelBucket::canonicalize(payer_id, payee_participant_id)?;
+    ChannelBucket::verify_account_info(
+        &ctx.accounts.channel_bucket.to_account_info(),
+        token_id,
+        ChannelBucket::bucket_id_for_pair(lower_id, higher_id)?,
+        ctx.program_id,
+    )?;
+    let lane = {
+        let channel_bucket_info = ctx.accounts.channel_bucket.to_account_info();
+        let channel_bucket_data = channel_bucket_info.try_borrow_data()?;
+        ChannelBucket::read_resolved_lane_core_from_data(
+            channel_bucket_data.as_ref(),
+            payer_id,
+            payee_participant_id,
+        )?
+    };
+    require!(lane.initialized, VaultError::ChannelNotInitialized);
     require!(
-        channel.has_pending_unlock(),
+        lane.has_pending_unlock(),
         VaultError::NoChannelUnlockPending
     );
 
-    let unlock_at = channel
+    let unlock_at = lane
         .unlock_requested_at
-        .checked_add(ctx.accounts.global_config.withdrawal_timelock_seconds)
+        .checked_add(
+            ctx.accounts
+                .global_config
+                .effective_channel_unlock_timelock_seconds()?,
+        )
         .ok_or(error!(VaultError::MathOverflow))?;
     require!(
         Clock::get()?.unix_timestamp >= unlock_at,
         VaultError::WithdrawalLocked
     );
 
-    let released_amount = channel.pending_unlock_amount.min(channel.locked_balance);
+    let released_amount = lane.pending_unlock_amount.min(lane.locked_balance);
     if released_amount > 0 {
-        ctx.accounts
-            .payer_account
-            .credit_token(token_id, released_amount)?;
-        channel.locked_balance = channel
-            .locked_balance
-            .checked_sub(released_amount)
-            .ok_or(error!(VaultError::MathOverflow))?;
+        ParticipantBucket::verify_account_info(
+            &ctx.accounts.payer_bucket.to_account_info(),
+            ParticipantBucket::bucket_id_for_participant_id(payer_id),
+            ctx.program_id,
+        )?;
     }
 
-    channel.pending_unlock_amount = 0;
-    channel.unlock_requested_at = 0;
+    let (released_amount, remaining_locked) = {
+        let channel_bucket_info = ctx.accounts.channel_bucket.to_account_info();
+        let mut channel_bucket_data = channel_bucket_info.try_borrow_mut_data()?;
+        ChannelBucket::execute_lane_unlock_in_data(
+            channel_bucket_data.as_mut(),
+            payer_id,
+            payee_participant_id,
+        )?
+    };
+    if released_amount > 0 {
+        let payer_bucket_info = ctx.accounts.payer_bucket.to_account_info();
+        let mut payer_bucket_data = payer_bucket_info.try_borrow_mut_data()?;
+        ParticipantBucket::apply_token_delta_in_data(
+            payer_bucket_data.as_mut(),
+            payer_id,
+            token_id,
+            i128::from(released_amount),
+        )?;
+    }
 
     emit!(ChannelFundsUnlocked {
-        payer_id: ctx.accounts.payer_account.participant_id,
-        payee_id: ctx.accounts.payee_account.participant_id,
+        payer_id,
+        payee_id: payee_participant_id,
         token_id,
         released_amount,
-        remaining_locked: channel.locked_balance,
+        remaining_locked,
     });
 
     Ok(())
@@ -54,31 +101,15 @@ pub struct ExecuteUnlockChannelFunds<'info> {
     )]
     pub global_config: Account<'info, GlobalConfig>,
 
-    #[account(
-        mut,
-        seeds = [ParticipantAccount::SEED_PREFIX, owner.key().as_ref()],
-        bump,
-        has_one = owner,
-    )]
-    pub payer_account: Account<'info, ParticipantAccount>,
+    /// CHECK: Verified with ParticipantBucket::verify_account_info before raw balance mutation.
+    #[account(mut)]
+    pub payer_bucket: UncheckedAccount<'info>,
 
-    #[account(
-        seeds = [ParticipantAccount::SEED_PREFIX, payee_account.owner.as_ref()],
-        bump,
-    )]
-    pub payee_account: Account<'info, ParticipantAccount>,
+    /// CHECK: Verified with ChannelBucket::verify_account_info before raw lane mutation.
+    #[account(mut)]
+    pub channel_bucket: UncheckedAccount<'info>,
 
-    #[account(
-        mut,
-        seeds = [
-            ChannelState::SEED_PREFIX,
-            payer_account.participant_id.to_le_bytes().as_ref(),
-            payee_account.participant_id.to_le_bytes().as_ref(),
-            channel_state.token_id.to_le_bytes().as_ref(),
-        ],
-        bump,
-    )]
-    pub channel_state: Account<'info, ChannelState>,
+    pub owner_index_bucket: Account<'info, OwnerIndexBucket>,
 
     pub owner: Signer<'info>,
 }

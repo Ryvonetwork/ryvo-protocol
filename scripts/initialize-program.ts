@@ -9,6 +9,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { AgonProtocol } from "../target/types/agon_protocol";
 
+const { loadProjectRpcEnv, resolveProjectRpcUrl } = require("./lib/rpc-env.cjs") as {
+  loadProjectRpcEnv: (repoRoot?: string) => void;
+  resolveProjectRpcUrl: (network?: string) => string;
+};
+
+loadProjectRpcEnv(process.cwd());
+
 const TOKEN_REGISTRY_SEED = "token-registry";
 const GLOBAL_CONFIG_SEED = "global-config";
 const VAULT_TOKEN_ACCOUNT_SEED = "vault-token-account";
@@ -45,6 +52,7 @@ interface DeploymentConfig {
   feeBps: number;
   registrationFeeLamports: number;
   withdrawalTimelockSeconds: number;
+  channelUnlockTimelockSeconds: number | null;
   tokens: DeploymentToken[];
   deployedAt: string;
 }
@@ -102,7 +110,48 @@ function loadProgram(provider: anchor.AnchorProvider): Program<AgonProtocol> {
     "agon_protocol.json"
   );
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf8"));
-  return new Program(idl as AgonProtocol, provider);
+  const resolvedProgramId = resolveProgramId(provider, idl);
+  return new Program(
+    { ...idl, address: resolvedProgramId.toString() } as AgonProtocol,
+    provider
+  );
+}
+
+function resolveProgramId(
+  provider: anchor.AnchorProvider,
+  idl: { address?: string }
+): PublicKey {
+  const fromEnv = process.env.AGON_PROGRAM_ID?.trim();
+  if (fromEnv) {
+    return new PublicKey(fromEnv);
+  }
+
+  const anchorTomlPath = path.join(__dirname, "..", "Anchor.toml");
+  if (fs.existsSync(anchorTomlPath)) {
+    const network = inferNetwork(provider.connection.rpcEndpoint);
+    const sectionHeader = `[programs.${network}]`;
+    let inSection = false;
+    for (const line of fs.readFileSync(anchorTomlPath, "utf8").split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("[")) {
+        inSection = trimmed === sectionHeader;
+        continue;
+      }
+      if (!inSection) continue;
+      const match = trimmed.match(/^agon_protocol\s*=\s*"([^"]+)"$/);
+      if (match) {
+        return new PublicKey(match[1]);
+      }
+    }
+  }
+
+  if (idl.address) {
+    return new PublicKey(idl.address);
+  }
+
+  throw new Error(
+    "Unable to resolve program id. Set AGON_PROGRAM_ID or update Anchor.toml."
+  );
 }
 
 function createWallet(payer: Keypair): anchor.Wallet & { payer: Keypair } {
@@ -133,7 +182,7 @@ function createWallet(payer: Keypair): anchor.Wallet & { payer: Keypair } {
 
 function loadProvider(): anchor.AnchorProvider {
   const rpcEndpoint =
-    process.env.ANCHOR_PROVIDER_URL ?? "https://api.devnet.solana.com";
+    process.env.ANCHOR_PROVIDER_URL ?? resolveProjectRpcUrl("devnet");
   const walletPath =
     process.env.ANCHOR_WALLET ??
     path.join(process.cwd(), "keys", "devnet-deployer.json");
@@ -526,6 +575,8 @@ async function initializeProgram(): Promise<DeploymentConfig> {
     provider,
     new PublicKey(globalConfig.feeRecipient.toString())
   );
+  const channelUnlockTimelockSeconds =
+    (globalConfig as any).channelUnlockTimelockSeconds?.toNumber?.() ?? null;
 
   console.log("🎯 Global config verified:");
   console.log("   - Authority:", globalConfig.authority.toString());
@@ -551,6 +602,13 @@ async function initializeProgram(): Promise<DeploymentConfig> {
     globalConfig.withdrawalTimelockSeconds.toNumber(),
     "seconds"
   );
+  if (channelUnlockTimelockSeconds !== null) {
+    console.log(
+      "   - Channel Unlock Timelock:",
+      channelUnlockTimelockSeconds,
+      "seconds"
+    );
+  }
   console.log("   - Allowlisted Tokens:", tokens.length);
 
   return {
@@ -565,6 +623,7 @@ async function initializeProgram(): Promise<DeploymentConfig> {
     registrationFeeLamports: globalConfig.registrationFeeLamports.toNumber(),
     withdrawalTimelockSeconds:
       globalConfig.withdrawalTimelockSeconds.toNumber(),
+    channelUnlockTimelockSeconds,
     tokens,
     deployedAt: new Date().toISOString(),
   };

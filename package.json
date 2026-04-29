@@ -3,8 +3,11 @@
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
-    "verify": "cargo fmt && cargo clippy -- -D warnings && anchor build",
-    "verify:full": "cargo fmt && cargo clippy -- -D warnings && anchor build && anchor test --skip-local-validator",
+    "verify:ts": "tsc --noEmit --pretty false",
+    "verify": "cargo fmt --all --check && cargo clippy -- -D warnings && anchor build -- --features custom-heap && npm run verify:ts",
+    "verify:protocol": "npm run verify && ts-mocha -p tsconfig.json tests/round-capacity.test.ts",
+    "verify:bls-local": "ts-mocha -p tsconfig.json tests/bls-capacity-local.test.ts",
+    "verify:full": "npm run verify && anchor test --skip-local-validator -- --features custom-heap",
     "test:local:prepare": "./scripts/prepare-local-test-suite.sh",
     "deploy": "./scripts/deploy.sh",
     "deploy:devnet": "./scripts/deploy.sh --network=devnet",
@@ -16,6 +19,7 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
+    "@noble/curves": "^1.9.7",
     "@solana/spl-token": "^0.4.8",
     "@solana/web3.js": "^1.95.3",
     "glob": "^13.0.6"

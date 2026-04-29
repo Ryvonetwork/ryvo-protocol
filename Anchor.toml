@@ -6,20 +6,20 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-agon_protocol = "DE4vmRRDu1EBj98pD9AuZmdTPFAyDChMmRoPRscze5g"
+agon_protocol = "3UyUFeNsUYPpM6hMRf7H8wg3MKEXQ82rqnsXhZrUwgSD"
 
 [programs.localnet]
-agon_protocol = "DE4vmRRDu1EBj98pD9AuZmdTPFAyDChMmRoPRscze5g"
+agon_protocol = "3UyUFeNsUYPpM6hMRf7H8wg3MKEXQ82rqnsXhZrUwgSD"
 
 [programs.mainnet]
-agon_protocol = "DE4vmRRDu1EBj98pD9AuZmdTPFAyDChMmRoPRscze5g"
+agon_protocol = "3UyUFeNsUYPpM6hMRf7H8wg3MKEXQ82rqnsXhZrUwgSD"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
-wallet = "~/agon/agon-protocol/keys/devnet-deployer.json"
+cluster = "https://devnet.helius-rpc.com/?api-key=865bd8f8-6a09-4d2a-98fd-d2c24969e293"
+wallet = "/home/heis/agon/agon-protocol/keys/devnet-deployer.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""

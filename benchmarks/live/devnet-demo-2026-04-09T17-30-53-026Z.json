@@ -47,9 +47,9 @@
         "savedTransactions": 9,
         "reductionPercent": 90,
         "compressionRatio": 10,
-        "estimatedBaselineCostUsd": 0.008,
-        "estimatedAgonCostUsd": 0.0008,
-        "estimatedSavingsUsd": 0.0072
+        "estimatedBaselineCostUsd": 0.0044,
+        "estimatedAgonCostUsd": 0.00044,
+        "estimatedSavingsUsd": 0.00396
       },
       "notes": [
         "One latest cumulative commitment replaces exact-payment settlement on the hot path."
@@ -90,9 +90,9 @@
         "savedTransactions": 7,
         "reductionPercent": 77.77777777777779,
         "compressionRatio": 4.5,
-        "estimatedBaselineCostUsd": 0.007200000000000001,
-        "estimatedAgonCostUsd": 0.0016,
-        "estimatedSavingsUsd": 0.005600000000000001
+        "estimatedBaselineCostUsd": 0.00396,
+        "estimatedAgonCostUsd": 0.00088,
+        "estimatedSavingsUsd": 0.00308
       },
       "notes": [
         "Many unilateral latest commitments settle in payee-side bundle transactions."
@@ -133,9 +133,9 @@
         "savedTransactions": 99999998,
         "reductionPercent": 99.999998,
         "compressionRatio": 50000000,
-        "estimatedBaselineCostUsd": 80000,
-        "estimatedAgonCostUsd": 0.0016,
-        "estimatedSavingsUsd": 79999.9984
+        "estimatedBaselineCostUsd": 44000,
+        "estimatedAgonCostUsd": 0.00088,
+        "estimatedSavingsUsd": 43999.99912
       },
       "notes": [
         "One collateral lock plus one cooperative clearing round settles two unilateral lanes."
@@ -173,9 +173,9 @@
         "savedTransactions": 99999999,
         "reductionPercent": 99.99999899999999,
         "compressionRatio": 100000000,
-        "estimatedBaselineCostUsd": 80000,
-        "estimatedAgonCostUsd": 0.0008,
-        "estimatedSavingsUsd": 79999.9992
+        "estimatedBaselineCostUsd": 44000,
+        "estimatedAgonCostUsd": 0.00044,
+        "estimatedSavingsUsd": 43999.99956
       },
       "notes": [
         "Two-way obligations collapse to one cooperative round and only residual net balance changes."
@@ -213,9 +213,9 @@
         "savedTransactions": 1666666664,
         "reductionPercent": 99.99999994,
         "compressionRatio": 1666666665,
-        "estimatedBaselineCostUsd": 1333333.3320000002,
-        "estimatedAgonCostUsd": 0.0008,
-        "estimatedSavingsUsd": 1333333.3312000001
+        "estimatedBaselineCostUsd": 733333.3326000001,
+        "estimatedAgonCostUsd": 0.00044,
+        "estimatedSavingsUsd": 733333.3321600001
       },
       "notes": [
         "Current multilateral rounds still pay per-channel state writes, but they compress settlement transactions and signed payloads."

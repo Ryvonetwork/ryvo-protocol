@@ -1,4 +1,6 @@
 pub mod cancel_withdrawal;
+pub mod clearing_round_message;
+pub mod cooperative_unlock_channel_funds;
 pub mod create_channel;
 pub mod deposit;
 pub mod deposit_for;
@@ -8,6 +10,7 @@ pub mod execute_withdrawal_timelocked;
 pub mod initialize;
 pub mod initialize_participant;
 pub mod lock_channel_funds;
+pub mod register_participant_bls_key;
 pub mod request_unlock_channel_funds;
 pub mod request_update_channel_authorized_signer;
 pub mod request_withdrawal;
@@ -20,6 +23,7 @@ pub mod update_inbound_channel_policy;
 
 // Re-export only the account structs (not `handler` fns which would conflict)
 pub use cancel_withdrawal::CancelWithdrawal;
+pub use cooperative_unlock_channel_funds::CooperativeUnlockChannelFunds;
 pub use create_channel::CreateChannel;
 pub use deposit::Deposit;
 pub use deposit_for::DepositFor;
@@ -29,6 +33,7 @@ pub use execute_withdrawal_timelocked::ExecuteWithdrawalTimelocked;
 pub use initialize::Initialize;
 pub use initialize_participant::InitializeParticipant;
 pub use lock_channel_funds::LockChannelFunds;
+pub use register_participant_bls_key::RegisterParticipantBlsKey;
 pub use request_unlock_channel_funds::RequestUnlockChannelFunds;
 pub use request_update_channel_authorized_signer::RequestUpdateChannelAuthorizedSigner;
 pub use request_withdrawal::RequestWithdrawal;

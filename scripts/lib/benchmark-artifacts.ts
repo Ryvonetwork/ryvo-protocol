@@ -1,4 +1,4 @@
-export const X402_SOLANA_COST_PER_TX_USD = 0.0008;
+export const X402_SOLANA_COST_PER_TX_USD = 0.00044;
 
 export type BenchmarkSavings = {
   baselineModel: string;
@@ -39,7 +39,7 @@ export type DemoBenchmarkScenario = {
   signedMessageBytes: number;
   signatureCount: number;
   participantBalanceWrites: number;
-  channelStateWrites: number;
+  channelLaneWrites: number;
   baselineModel: string;
   savings: BenchmarkSavings;
   notes: string[];
@@ -73,22 +73,6 @@ export type SyntheticBenchmarkSnapshot = {
     currentConservativeSignedMessageBytes: number;
   };
   clearing: {
-    currentV0AltCycle: {
-      participantCount: number;
-      channelCount: number;
-      serializedTxBytes: number;
-      messageBytes: number;
-      authEnvelopeBytes: number;
-      remainingBytes: number;
-    };
-    currentV0AltOverall: {
-      participantCount: number;
-      channelCount: number;
-      serializedTxBytes: number;
-      messageBytes: number;
-      authEnvelopeBytes: number;
-      remainingBytes: number;
-    };
     blsV0AltCycle: {
       participantCount: number;
       channelCount: number;
@@ -96,6 +80,9 @@ export type SyntheticBenchmarkSnapshot = {
       messageBytes: number;
       authEnvelopeBytes: number;
       remainingBytes: number;
+      participantBucketCount: number;
+      channelBucketCount: number;
+      dynamicWritableAccountCount: number;
     };
     blsV0AltOverall: {
       participantCount: number;
@@ -104,6 +91,9 @@ export type SyntheticBenchmarkSnapshot = {
       messageBytes: number;
       authEnvelopeBytes: number;
       remainingBytes: number;
+      participantBucketCount: number;
+      channelBucketCount: number;
+      dynamicWritableAccountCount: number;
     };
   };
 };
@@ -150,7 +140,8 @@ export function computeSavingsMetrics(params: {
       : baselineTransactionCount / settlementTransactionCount;
   const estimatedBaselineCostUsd =
     baselineTransactionCount * perTransactionCostUsd;
-  const estimatedAgonCostUsd = settlementTransactionCount * perTransactionCostUsd;
+  const estimatedAgonCostUsd =
+    settlementTransactionCount * perTransactionCostUsd;
 
   return {
     baselineModel,

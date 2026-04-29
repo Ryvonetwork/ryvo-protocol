@@ -51,7 +51,9 @@ pub fn handler(
     );
     let (authority, pending_authority) =
         resolve_bootstrap_authorities(ctx.accounts.upgrade_authority.key(), initial_authority)?;
-    let withdrawal_timelock_seconds = GlobalConfig::timelock_for_chain_id(chain_id)?;
+    let withdrawal_timelock_seconds = GlobalConfig::withdrawal_timelock_for_chain_id(chain_id)?;
+    let channel_unlock_timelock_seconds =
+        GlobalConfig::channel_unlock_timelock_for_chain_id(chain_id)?;
     let message_domain = GlobalConfig::derive_message_domain(ctx.program_id, chain_id);
 
     let config = &mut ctx.accounts.global_config;
@@ -59,13 +61,14 @@ pub fn handler(
     config.fee_recipient = ctx.accounts.fee_recipient.key();
     config.fee_bps = fee_bps;
     config.withdrawal_timelock_seconds = withdrawal_timelock_seconds;
+    config.channel_unlock_timelock_seconds = channel_unlock_timelock_seconds;
     config.registration_fee_lamports = registration_fee_lamports;
     config.next_participant_id = 0;
     config.bump = ctx.bumps.global_config;
     config.chain_id = chain_id;
     config.message_domain = message_domain;
     config.pending_authority = pending_authority;
-    config._reserved = [0u8; 14];
+    config._reserved = [0u8; 6];
 
     if pending_authority != Pubkey::default() {
         emit!(ConfigAuthorityTransferStarted {

@@ -10,22 +10,23 @@ import {
   expectProgramError,
   createTestParticipant,
   ensureChannel,
+  fetchParticipant,
+  findGlobalConfigPda,
+  findOwnerIndexBucketPda,
+  findParticipantBucketPdaById,
+  ownerIndexBucketIdForOwner,
+  participantBucketIdForParticipantId,
 } from "./shared/setup";
 
 describe("Participant Registration", () => {
   it("should register a participant with zero fee", async () => {
-    const [globalConfigPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("global-config")],
-      program.programId
-    );
+    const globalConfigPda = findGlobalConfigPda();
     const globalConfigBefore = await program.account.globalConfig.fetch(
       globalConfigPda
     );
-    const { wallet, participantPda } = await createTestParticipant();
+    const { wallet } = await createTestParticipant();
 
-    const participant = await program.account.participantAccount.fetch(
-      participantPda
-    );
+    const participant = await fetchParticipant(wallet.publicKey);
     expect(participant.owner.toString()).to.equal(wallet.publicKey.toString());
     expect(participant.participantId).to.equal(
       globalConfigBefore.nextParticipantId
@@ -42,11 +43,6 @@ describe("Participant Registration", () => {
   });
 
   it("initialize_participant: rejects InvalidFeeRecipient (fee_recipient mismatch)", async () => {
-    const [globalConfigPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("global-config")],
-      program.programId
-    );
-
     const wrongFeeRecipient = user1.publicKey;
     const freshUser = anchor.web3.Keypair.generate();
     await provider.connection.confirmTransaction(
@@ -55,14 +51,28 @@ describe("Participant Registration", () => {
         2 * anchor.web3.LAMPORTS_PER_SOL
       )
     );
+    const globalConfigPda = findGlobalConfigPda();
+    const globalConfig = await program.account.globalConfig.fetch(
+      globalConfigPda
+    );
+    const participantId = Number(globalConfig.nextParticipantId);
+    const participantBucket = findParticipantBucketPdaById(participantId);
+    const ownerIndexBucket = findOwnerIndexBucketPda(freshUser.publicKey);
 
     await expectProgramError(
       () =>
         program.methods
-          .initializeParticipant()
+          .initializeParticipant(
+            participantBucketIdForParticipantId(participantId),
+            ownerIndexBucketIdForOwner(freshUser.publicKey)
+          )
           .accounts({
+            globalConfig: globalConfigPda,
+            participantBucket,
+            ownerIndexBucket,
             owner: freshUser.publicKey,
             feeRecipient: wrongFeeRecipient,
+            systemProgram: anchor.web3.SystemProgram.programId,
           } as any)
           .signers([freshUser])
           .rpc(),
@@ -71,10 +81,7 @@ describe("Participant Registration", () => {
   });
 
   it("should register user2, user3, and user4", async () => {
-    const [globalConfigPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("global-config")],
-      program.programId
-    );
+    const globalConfigPda = findGlobalConfigPda();
     const globalConfigBefore = await program.account.globalConfig.fetch(
       globalConfigPda
     );
@@ -105,9 +112,7 @@ describe("Participant Registration", () => {
     const participant = await createTestParticipant();
     const freshPayer = await createTestParticipant();
 
-    const stored = await program.account.participantAccount.fetch(
-      participant.participantPda
-    );
+    const stored = await fetchParticipant(participant.wallet.publicKey);
     expect(stored.inboundChannelPolicy).to.equal(1);
 
     await expectProgramError(
@@ -120,37 +125,42 @@ describe("Participant Registration", () => {
   });
 
   it("does not allow the same wallet to initialize twice", async () => {
-    const [globalConfigPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("global-config")],
-      program.programId
-    );
+    const globalConfigPda = findGlobalConfigPda();
     const participant = await createTestParticipant();
     const globalConfigBefore = await program.account.globalConfig.fetch(
       globalConfigPda
     );
-    const participantBefore = await program.account.participantAccount.fetch(
-      participant.participantPda
+    const participantBefore = await fetchParticipant(participant.wallet.publicKey);
+    const nextParticipantId = Number(globalConfigBefore.nextParticipantId);
+    const participantBucket = findParticipantBucketPdaById(nextParticipantId);
+    const ownerIndexBucket = findOwnerIndexBucketPda(
+      participant.wallet.publicKey
     );
 
     await expectProgramError(
       () =>
         program.methods
-          .initializeParticipant()
+          .initializeParticipant(
+            participantBucketIdForParticipantId(nextParticipantId),
+            ownerIndexBucketIdForOwner(participant.wallet.publicKey)
+          )
           .accounts({
+            globalConfig: globalConfigPda,
+            participantBucket,
+            ownerIndexBucket,
             owner: participant.wallet.publicKey,
             feeRecipient: feeRecipient.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
           } as any)
           .signers([participant.wallet])
           .rpc(),
-      "already in use"
+      "OwnerAlreadyRegistered"
     );
 
     const globalConfigAfter = await program.account.globalConfig.fetch(
       globalConfigPda
     );
-    const participantAfter = await program.account.participantAccount.fetch(
-      participant.participantPda
-    );
+    const participantAfter = await fetchParticipant(participant.wallet.publicKey);
 
     expect(globalConfigAfter.nextParticipantId).to.equal(
       globalConfigBefore.nextParticipantId
@@ -174,7 +184,8 @@ describe("Participant Registration", () => {
         program.methods
           .updateInboundChannelPolicy(99)
           .accounts({
-            participantAccount: participant.participantPda,
+            participantBucket: participant.participantPda,
+            ownerIndexBucket: findOwnerIndexBucketPda(participant.wallet.publicKey),
             owner: participant.wallet.publicKey,
           } as any)
           .signers([participant.wallet])
@@ -184,10 +195,7 @@ describe("Participant Registration", () => {
   });
 
   it("should register participant with non-zero fee", async () => {
-    const [globalConfigPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("global-config")],
-      program.programId
-    );
+    const globalConfigPda = findGlobalConfigPda();
     const user5 = anchor.web3.Keypair.generate();
     await provider.connection.confirmTransaction(
       await provider.connection.requestAirdrop(
@@ -204,10 +212,12 @@ describe("Participant Registration", () => {
       .signers([deployer])
       .rpc();
 
-    const [participantPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("participant"), user5.publicKey.toBytes()],
-      program.programId
+    const globalConfigBefore = await program.account.globalConfig.fetch(
+      globalConfigPda
     );
+    const participantId = Number(globalConfigBefore.nextParticipantId);
+    const participantBucket = findParticipantBucketPdaById(participantId);
+    const ownerIndexBucket = findOwnerIndexBucketPda(user5.publicKey);
     const user5BalBefore = await provider.connection.getBalance(
       user5.publicKey
     );
@@ -215,10 +225,17 @@ describe("Participant Registration", () => {
       feeRecipient.publicKey
     );
     await program.methods
-      .initializeParticipant()
+      .initializeParticipant(
+        participantBucketIdForParticipantId(participantId),
+        ownerIndexBucketIdForOwner(user5.publicKey)
+      )
       .accounts({
+        globalConfig: globalConfigPda,
+        participantBucket,
+        ownerIndexBucket,
         owner: user5.publicKey,
         feeRecipient: feeRecipient.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
       } as any)
       .signers([user5])
       .rpc();
