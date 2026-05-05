@@ -130,15 +130,29 @@ deploy_program_with_solana_cli() {
 }
 
 sync_anchor_program_ids() {
-  local program_id="$1"
+  local program_name="$1"
+  local program_id="$2"
   local anchor_toml="Anchor.toml"
 
   for cluster in devnet localnet mainnet; do
-    sed -i "/^\[programs\.$cluster\]$/{
-      n
-      s/^agon_protocol = \".*\"$/agon_protocol = \"$program_id\"/
-    }" "$anchor_toml"
+    sed -i "/^\[programs\.$cluster\]$/,/^\[/ { s/^${program_name} = \".*\"$/${program_name} = \"$program_id\"/ }" "$anchor_toml"
   done
+}
+
+ensure_mock_yield_keypair() {
+  if [[ ! -f "target/deploy/mock_yield-keypair.json" ]]; then
+    mkdir -p target/deploy
+    echo "🔑 Generating mock_yield program keypair (target/deploy/mock_yield-keypair.json)..."
+    solana-keygen new --no-bip39-passphrase -o target/deploy/mock_yield-keypair.json -f >/dev/null
+    local mock_yield_id
+    mock_yield_id="$(solana address -k target/deploy/mock_yield-keypair.json)"
+    sync_anchor_program_ids "mock_yield" "$mock_yield_id"
+    # Update declare_id! in src/lib.rs so on-chain id matches the keypair.
+    if [[ -f "programs/mock-yield/src/lib.rs" ]]; then
+      sed -i "s|^declare_id!(\"[^\"]*\");|declare_id!(\"$mock_yield_id\");|" programs/mock-yield/src/lib.rs
+    fi
+    echo "📋 mock_yield program id: $mock_yield_id"
+  fi
 }
 
 # Default network
@@ -206,13 +220,24 @@ echo "🚀 Starting Agon Protocol deployment to $NETWORK..."
 RPC_URL="$(resolve_project_rpc_url "$NETWORK")"
 
 if [[ "$FRESH_PROGRAM_ID" == "true" ]]; then
-  echo "🆕 Generating a fresh program id to avoid stale onchain state..."
+  echo "🆕 Generating a fresh agon_protocol program id to avoid stale onchain state..."
   mkdir -p target/deploy
   solana-keygen new --no-bip39-passphrase -o target/deploy/agon_protocol-keypair.json -f >/dev/null
+  # Mock-yield is brand-new in v6; rotate its id alongside agon_protocol when --fresh-program-id is set.
+  echo "🆕 Generating a fresh mock_yield program id..."
+  solana-keygen new --no-bip39-passphrase -o target/deploy/mock_yield-keypair.json -f >/dev/null
   anchor keys sync >/dev/null
   FRESH_PROGRAM_ID_VALUE="$(solana address -k target/deploy/agon_protocol-keypair.json)"
-  sync_anchor_program_ids "$FRESH_PROGRAM_ID_VALUE"
-  echo "📋 Fresh program id: $FRESH_PROGRAM_ID_VALUE"
+  FRESH_MOCK_YIELD_ID_VALUE="$(solana address -k target/deploy/mock_yield-keypair.json)"
+  sync_anchor_program_ids "agon_protocol" "$FRESH_PROGRAM_ID_VALUE"
+  sync_anchor_program_ids "mock_yield" "$FRESH_MOCK_YIELD_ID_VALUE"
+  if [[ -f "programs/mock-yield/src/lib.rs" ]]; then
+    sed -i "s|^declare_id!(\"[^\"]*\");|declare_id!(\"$FRESH_MOCK_YIELD_ID_VALUE\");|" programs/mock-yield/src/lib.rs
+  fi
+  echo "📋 Fresh agon_protocol id: $FRESH_PROGRAM_ID_VALUE"
+  echo "📋 Fresh mock_yield   id: $FRESH_MOCK_YIELD_ID_VALUE"
+else
+  ensure_mock_yield_keypair
 fi
 
 # Step 0: Check wallet balance and provide funding instructions
@@ -245,6 +270,8 @@ anchor build -- --features custom-heap
 echo "📦 Deploying to $NETWORK..."
 PROGRAM_SO="target/deploy/agon_protocol.so"
 PROGRAM_KEYPAIR="target/deploy/agon_protocol-keypair.json"
+MOCK_YIELD_SO="target/deploy/mock_yield.so"
+MOCK_YIELD_KEYPAIR="target/deploy/mock_yield-keypair.json"
 AGAVE_SOLANA_BIN="$(find_agave_beta_solana_bin || true)"
 
 USE_DIRECT_SOLANA_DEPLOY="${AGON_DEPLOY_WITH_SOLANA_CLI:-0}"
@@ -260,7 +287,12 @@ if [[ "$USE_DIRECT_SOLANA_DEPLOY" == "1" ]]; then
     echo "❌ AGON_DEPLOY_WITH_SOLANA_CLI=1 but Agave beta solana binary was not found."
     exit 1
   fi
+  echo "📦 Deploying agon_protocol..."
   deploy_program_with_solana_cli "$AGAVE_SOLANA_BIN" "$RPC_URL" "$WALLET_FILE" "$PROGRAM_SO" "$PROGRAM_KEYPAIR"
+  if [[ -f "$MOCK_YIELD_SO" ]]; then
+    echo "📦 Deploying mock_yield..."
+    deploy_program_with_solana_cli "$AGAVE_SOLANA_BIN" "$RPC_URL" "$WALLET_FILE" "$MOCK_YIELD_SO" "$MOCK_YIELD_KEYPAIR"
+  fi
 elif [[ "$NETWORK" == "devnet" ]]; then
   ANCHOR_PROVIDER_URL="$RPC_URL" anchor deploy --provider.cluster devnet --provider.wallet "$WALLET_FILE"
 elif [[ "$NETWORK" == "mainnet" ]]; then
@@ -329,9 +361,35 @@ if [[ -n "$CONFIG_JSON" && "$CONFIG_JSON" != "{}" ]]; then
   echo "💾 Deployment config saved to: $CONFIG_FILE"
 fi
 
-echo "🎉 Deployment and initialization complete!"
+# Step 4: Bootstrap v6 yield-bearing setup (mock-yield Reserve + agUSDC TokenEntry).
+# Idempotent — safe to run on every deploy.
+if [[ "${AGON_SKIP_YIELD_BOOTSTRAP:-0}" != "1" ]]; then
+  echo "🌱 Bootstrapping yield-bearing setup (mock-yield Reserve + agUSDC TokenEntry)..."
+  BOOTSTRAP_ARGS=(--bootstrap-only --network "$NETWORK")
+  if [[ -n "${AGON_USDC_MINT:-}" ]]; then
+    BOOTSTRAP_ARGS+=(--usdc-mint "$AGON_USDC_MINT")
+  fi
+  if [[ -n "${AGON_FEE_RECIPIENT:-}" ]]; then
+    BOOTSTRAP_ARGS+=(--fee-recipient "$AGON_FEE_RECIPIENT")
+  fi
+  env ANCHOR_PROVIDER_URL="$RPC_URL" ANCHOR_WALLET="$WALLET_FILE" \
+    "$NODE_BIN" node_modules/ts-node/dist/bin.js scripts/yield-bearing-demo.ts "${BOOTSTRAP_ARGS[@]}" || {
+      echo "❌ Yield-bearing bootstrap failed."
+      echo "   You can re-run it manually with:"
+      echo "     yarn ts-node scripts/bootstrap-yield-bearing.ts --network $NETWORK"
+      exit 1
+    }
+  echo "✅ Yield-bearing setup ready."
+else
+  echo "⏭️  Skipping yield-bearing bootstrap (AGON_SKIP_YIELD_BOOTSTRAP=1)."
+fi
+
+echo "🎉 Deployment, initialization, and yield-bearing bootstrap complete!"
 echo "🌐 Network: $NETWORK"
-echo "📋 Program ID: $(solana address -k target/deploy/agon_protocol-keypair.json)"
+echo "📋 agon_protocol id: $(solana address -k target/deploy/agon_protocol-keypair.json)"
+if [[ -f "target/deploy/mock_yield-keypair.json" ]]; then
+  echo "📋 mock_yield   id: $(solana address -k target/deploy/mock_yield-keypair.json)"
+fi
 
 if [[ -f "config/${NETWORK}-deployment.json" ]]; then
   echo "📄 Config file: config/${NETWORK}-deployment.json"

@@ -20,6 +20,7 @@ pub mod settle_individual;
 pub mod token_registry;
 pub mod update_config;
 pub mod update_inbound_channel_policy;
+pub mod yield_bearing;
 
 // Re-export only the account structs (not `handler` fns which would conflict)
 pub use cancel_withdrawal::CancelWithdrawal;
@@ -44,3 +45,7 @@ pub use token_registry::*;
 pub use update_config::AcceptConfigAuthority;
 pub use update_config::UpdateConfig;
 pub use update_inbound_channel_policy::UpdateInboundChannelPolicy;
+pub use yield_bearing::{
+    AccrueYield, ClaimProtocolYieldFee, DepositYieldBearing, ExecuteWithdrawalYieldBearing,
+    RegisterYieldBearingToken, RequestWithdrawalYieldBearing,
+};

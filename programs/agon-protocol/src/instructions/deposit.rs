@@ -14,6 +14,13 @@ pub fn handler(ctx: Context<Deposit>, token_id: u16, amount: u64) -> Result<()> 
         .find_token(token_id)
         .ok_or(crate::errors::VaultError::TokenNotFound)?;
 
+    // Plain deposit cannot operate on a yield-bearing token id; clients must use
+    // `deposit_yield_bearing` instead.
+    require!(
+        !token_entry.is_yield_bearing(),
+        VaultError::TokenIsYieldBearing
+    );
+
     // Verify the provided accounts match the registered token
     require!(
         ctx.accounts.owner_token_account.mint == token_entry.mint,

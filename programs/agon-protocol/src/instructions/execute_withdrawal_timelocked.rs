@@ -27,6 +27,12 @@ pub fn handler(
         token_entry.decimals <= TokenRegistry::MAX_TOKEN_DECIMALS,
         VaultError::InvalidTokenDecimals
     );
+    // Plain timelocked execution cannot target a yield-bearing token id; clients must use
+    // `execute_withdrawal_yield_bearing` instead.
+    require!(
+        !token_entry.is_yield_bearing(),
+        VaultError::TokenIsYieldBearing
+    );
 
     let token_balance = {
         let participant_bucket_info = ctx.accounts.participant_bucket.to_account_info();

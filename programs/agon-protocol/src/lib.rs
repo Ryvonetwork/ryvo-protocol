@@ -30,8 +30,9 @@ use instructions::settle_individual::*;
 use instructions::token_registry::*;
 use instructions::update_config::*;
 use instructions::update_inbound_channel_policy::*;
+use instructions::yield_bearing::*;
 
-declare_id!("3UyUFeNsUYPpM6hMRf7H8wg3MKEXQ82rqnsXhZrUwgSD");
+declare_id!("BwgpBosirapyVFeoHBg99kCyUANPajApFeTRSZNsJbRU");
 
 #[cfg(feature = "custom-heap")]
 solana_allocator::custom_heap!();
@@ -301,5 +302,77 @@ pub mod agon_protocol {
     /// Pending token registry authority accepts the handoff.
     pub fn accept_registry_authority(ctx: Context<AcceptRegistryAuthority>) -> Result<()> {
         instructions::token_registry::accept_registry_authority(ctx)
+    }
+
+    // ---------------------------------------------------------------------
+    // v6: yield-bearing instructions (agUSDC over mock-yield)
+    // ---------------------------------------------------------------------
+
+    /// Register a yield-bearing wrapper token (e.g. agUSDC). Creates a TokenEntry with
+    /// `kind = YieldBearing`, allocates a `YieldStrategy` PDA, and creates the protocol-owned
+    /// `share_vault` (a cUSDC ATA whose authority is the GlobalConfig PDA). Authority-only.
+    pub fn register_yield_bearing_token(
+        ctx: Context<RegisterYieldBearingToken>,
+        token_id: u16,
+        symbol_bytes: [u8; 8],
+        protocol_yield_share_bps: u16,
+    ) -> Result<()> {
+        instructions::yield_bearing::register_yield_bearing_token(
+            ctx,
+            token_id,
+            symbol_bytes,
+            protocol_yield_share_bps,
+        )
+    }
+
+    /// Accrue yield for a yield-bearing token (permissionless). Pulls the latest cUSDC rate from
+    /// the lending program, advances `user_index_q64`, and credits `protocol_owed_underlying`.
+    pub fn accrue_yield(ctx: Context<AccrueYield>) -> Result<()> {
+        instructions::yield_bearing::accrue_yield(ctx)
+    }
+
+    /// Deposit USDC and receive a credit of agUSDC shares. The protocol CPIs into the lending
+    /// program to mint cUSDC into its share_vault.
+    pub fn deposit_yield_bearing(
+        ctx: Context<DepositYieldBearing>,
+        token_id: u16,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::yield_bearing::deposit_yield_bearing(ctx, token_id, amount)
+    }
+
+    /// Request a timelocked withdrawal of `shares` agUSDC, redeemable to `destination` (USDC ATA).
+    pub fn request_withdrawal_yield_bearing(
+        ctx: Context<RequestWithdrawalYieldBearing>,
+        token_id: u16,
+        shares: u64,
+        destination: Pubkey,
+    ) -> Result<()> {
+        instructions::yield_bearing::request_withdrawal_yield_bearing(
+            ctx,
+            token_id,
+            shares,
+            destination,
+        )
+    }
+
+    /// Execute a previously requested withdrawal once its timelock expires. Redeems the
+    /// proportional cUSDC into USDC and pays user (net) and fee_recipient (fee).
+    pub fn execute_withdrawal_yield_bearing(
+        ctx: Context<ExecuteWithdrawalYieldBearing>,
+        token_id: u16,
+        participant_id: u32,
+    ) -> Result<()> {
+        instructions::yield_bearing::execute_withdrawal_yield_bearing(ctx, token_id, participant_id)
+    }
+
+    /// Claim accumulated protocol yield (fee_recipient only). Redeems up to
+    /// `protocol_owed_underlying` USDC from the share_vault.
+    pub fn claim_protocol_yield_fee(
+        ctx: Context<ClaimProtocolYieldFee>,
+        token_id: u16,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::yield_bearing::claim_protocol_yield_fee(ctx, token_id, amount)
     }
 }

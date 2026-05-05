@@ -6,19 +6,22 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-agon_protocol = "3UyUFeNsUYPpM6hMRf7H8wg3MKEXQ82rqnsXhZrUwgSD"
+agon_protocol = "BwgpBosirapyVFeoHBg99kCyUANPajApFeTRSZNsJbRU"
+mock_yield = "FX5RrnwvK9iRjZaczFbE6vokLfzVN9UwHw37smqBJjmB"
 
 [programs.localnet]
-agon_protocol = "3UyUFeNsUYPpM6hMRf7H8wg3MKEXQ82rqnsXhZrUwgSD"
+agon_protocol = "BwgpBosirapyVFeoHBg99kCyUANPajApFeTRSZNsJbRU"
+mock_yield = "FX5RrnwvK9iRjZaczFbE6vokLfzVN9UwHw37smqBJjmB"
 
 [programs.mainnet]
-agon_protocol = "3UyUFeNsUYPpM6hMRf7H8wg3MKEXQ82rqnsXhZrUwgSD"
+agon_protocol = "BwgpBosirapyVFeoHBg99kCyUANPajApFeTRSZNsJbRU"
+mock_yield = "FX5RrnwvK9iRjZaczFbE6vokLfzVN9UwHw37smqBJjmB"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "https://api.devnet.solana.com"
+cluster = "https://devnet.helius-rpc.com/?api-key=3faa0eb3-3be2-42bd-8a96-cd73694301ae"
 wallet = "/home/heis/agon/agon-protocol/keys/devnet-deployer.json"
 
 [scripts]

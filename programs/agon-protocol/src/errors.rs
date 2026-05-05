@@ -156,4 +156,34 @@ pub enum VaultError {
     BucketFull,
     #[msg("Owner is already registered")]
     OwnerAlreadyRegistered,
+    /// Permanent: Plain deposit/withdraw cannot operate on a yield-bearing token id.
+    /// Use `deposit_yield_bearing` / `request_withdrawal_yield_bearing` instead.
+    #[msg("Token id is yield-bearing; use the yield-bearing instruction variant")]
+    TokenIsYieldBearing,
+    /// Permanent: yield-bearing instruction was called with a plain token id.
+    #[msg("Token id is plain; use the plain deposit/withdrawal instruction")]
+    TokenIsNotYieldBearing,
+    /// Permanent: provided YieldStrategy account does not match the token id or its stored fields
+    /// (mint / reserve / share_mint / share_vault) drift from the registered config.
+    #[msg("YieldStrategy account does not match the registered token configuration")]
+    InvalidYieldStrategy,
+    /// User action: fee_recipient asked to claim more than `protocol_owed_underlying`. Wait for
+    /// more yield to accrue or claim a smaller amount.
+    #[msg("Requested protocol yield claim exceeds accrued protocol yield")]
+    InsufficientProtocolYield,
+    /// Permanent: the YieldStrategy's underlying mint does not match the mock-yield Reserve's
+    /// underlying mint.
+    #[msg("Yield-bearing underlying mint does not match the lending reserve")]
+    YieldUnderlyingMismatch,
+    /// Permanent: protocol's solvency invariant would be broken by this transaction. This should
+    /// only fire if mock-yield account state has drifted from the strategy's tracking; bug in
+    /// the protocol if it ever fires in production.
+    #[msg("Solvency invariant violated: share_vault USDC value < user_owed + protocol_owed")]
+    SolvencyInvariantBroken,
+    /// Permanent: provided yield/lending program does not match the strategy's `yield_program`.
+    #[msg("Yield program account does not match strategy.yield_program")]
+    InvalidYieldProgram,
+    /// Permanent: protocol_yield_share_bps exceeded the protocol-imposed cap.
+    #[msg("Protocol yield share bps exceeds the maximum allowed value")]
+    InvalidProtocolYieldShareBps,
 }

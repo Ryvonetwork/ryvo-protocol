@@ -62,13 +62,16 @@ pub fn register_token(
         VaultError::InvalidTokenSymbol
     );
 
-    // Add token to registry
+    // Add token to registry. Plain (kind = 0) — yield-bearing wrappers go through
+    // `register_yield_bearing_token` instead.
     let entry = TokenEntry {
         id: token_id,
         mint: mint.key(),
         decimals: mint.decimals,
         symbol: symbol_bytes,
         registered_at: Clock::get()?.unix_timestamp,
+        kind: crate::state::TOKEN_KIND_PLAIN,
+        _reserved: [0u8; 4],
     };
 
     let required_space = TokenRegistry::required_space(registry.tokens.len() + 1)?;

@@ -46,6 +46,7 @@ dependencies = [
  "anchor-spl",
  "bytemuck",
  "hex-literal",
+ "mock-yield",
  "proptest",
  "sha2 0.10.9",
  "solana-allocator",
@@ -1040,6 +1041,15 @@ dependencies = [
  "keccak",
  "rand_core 0.6.4",
  "zeroize",
+]
+
+[[package]]
+name = "mock-yield"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+ "solana-allocator",
 ]
 
 [[package]]

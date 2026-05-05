@@ -165,3 +165,52 @@ pub struct ClearingRoundSettled {
     pub total_gross: u64,
     pub total_net_adjusted: u64,
 }
+
+#[event]
+pub struct YieldBearingTokenRegistered {
+    pub token_id: u16,
+    pub underlying_mint: Pubkey,
+    pub share_mint: Pubkey,
+    pub share_vault: Pubkey,
+    pub reserve: Pubkey,
+    pub yield_program: Pubkey,
+    pub protocol_yield_share_bps: u16,
+}
+
+#[event]
+pub struct YieldAccrued {
+    pub token_id: u16,
+    pub current_underlying: u64,
+    pub last_settled_underlying: u64,
+    pub user_index_q64: u128,
+    pub protocol_owed_underlying: u64,
+    pub total_user_shares: u64,
+}
+
+#[event]
+pub struct YieldDeposited {
+    pub participant_id: u32,
+    pub token_id: u16,
+    pub usdc_amount: u64,
+    pub shares_minted: u64,
+    pub user_index_q64: u128,
+}
+
+#[event]
+pub struct YieldWithdrawn {
+    pub participant_id: u32,
+    pub token_id: u16,
+    pub shares_burned: u64,
+    pub usdc_gross: u64,
+    pub usdc_net: u64,
+    pub usdc_fee: u64,
+    pub destination: Pubkey,
+}
+
+#[event]
+pub struct ProtocolYieldClaimed {
+    pub token_id: u16,
+    pub fee_recipient: Pubkey,
+    pub usdc_amount: u64,
+    pub protocol_owed_underlying_after: u64,
+}

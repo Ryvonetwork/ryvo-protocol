@@ -33,6 +33,12 @@ pub fn handler(
         .find_token(token_id)
         .ok_or(VaultError::TokenNotFound)?;
 
+    // Plain withdrawal request cannot target a yield-bearing token id.
+    require!(
+        !token_entry.is_yield_bearing(),
+        VaultError::TokenIsYieldBearing
+    );
+
     require!(amount > 0, VaultError::AmountMustBePositive);
 
     // Destination must not be zero. Can be participant's own or any 3rd party token account.

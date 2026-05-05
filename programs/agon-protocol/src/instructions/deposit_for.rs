@@ -30,6 +30,12 @@ pub fn handler(
         .find_token(token_id)
         .ok_or(crate::errors::VaultError::TokenNotFound)?;
 
+    // Plain deposit_for cannot operate on a yield-bearing token id.
+    require!(
+        !token_entry.is_yield_bearing(),
+        crate::errors::VaultError::TokenIsYieldBearing
+    );
+
     // Validate funder token account matches registered token
     require!(
         ctx.accounts.funder_token_account.mint == token_entry.mint,
