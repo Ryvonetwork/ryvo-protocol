@@ -23,7 +23,7 @@ use anchor_spl::token::{self, Burn, Mint, MintTo, Token, TokenAccount, Transfer}
 #[cfg(all(feature = "custom-heap", not(feature = "no-entrypoint")))]
 solana_allocator::custom_heap!();
 
-declare_id!("FX5RrnwvK9iRjZaczFbE6vokLfzVN9UwHw37smqBJjmB");
+declare_id!("As3ry57AGfjXg7eg38QxHvnoA3Pqymkxd17rXJMeciCX");
 
 pub const SECONDS_PER_YEAR: u64 = 31_536_000;
 pub const BPS_DENOM: u128 = 10_000;

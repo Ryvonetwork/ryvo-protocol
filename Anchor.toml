@@ -6,16 +6,16 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-agon_protocol = "BwgpBosirapyVFeoHBg99kCyUANPajApFeTRSZNsJbRU"
-mock_yield = "FX5RrnwvK9iRjZaczFbE6vokLfzVN9UwHw37smqBJjmB"
+agon_protocol = "77VR7b4BXx2KTSXA3Tbarw4w1MC5Qvv6QespTyCxWamM"
+mock_yield = "As3ry57AGfjXg7eg38QxHvnoA3Pqymkxd17rXJMeciCX"
 
 [programs.localnet]
-agon_protocol = "BwgpBosirapyVFeoHBg99kCyUANPajApFeTRSZNsJbRU"
-mock_yield = "FX5RrnwvK9iRjZaczFbE6vokLfzVN9UwHw37smqBJjmB"
+agon_protocol = "77VR7b4BXx2KTSXA3Tbarw4w1MC5Qvv6QespTyCxWamM"
+mock_yield = "As3ry57AGfjXg7eg38QxHvnoA3Pqymkxd17rXJMeciCX"
 
 [programs.mainnet]
-agon_protocol = "BwgpBosirapyVFeoHBg99kCyUANPajApFeTRSZNsJbRU"
-mock_yield = "FX5RrnwvK9iRjZaczFbE6vokLfzVN9UwHw37smqBJjmB"
+agon_protocol = "77VR7b4BXx2KTSXA3Tbarw4w1MC5Qvv6QespTyCxWamM"
+mock_yield = "As3ry57AGfjXg7eg38QxHvnoA3Pqymkxd17rXJMeciCX"
 
 [registry]
 url = "https://api.apr.dev"

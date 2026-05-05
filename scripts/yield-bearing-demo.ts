@@ -74,8 +74,16 @@ const LIQUIDITY_VAULT_SEED = Buffer.from("liquidity-vault");
 const AG_USDC_TOKEN_ID = 1;
 const AG_USDC_SYMBOL = "agUSDC";
 const PROTOCOL_YIELD_SHARE_BPS = 3_333; // ~33.33% of yield to protocol (6% gross → ~4% net for users).
-const INITIAL_APY_BPS = 600; // 6%
-const BUMPED_APY_BPS = 900; // 9% (mid-run rate change)
+// Demo defaults — cranked up so visible yield accrues in <60s even with small balances.
+// Mock-yield uses linear integer accrual: yield = total * apy_bps * dt / (10_000 * 31_536_000).
+// At 5000 bps (50%) APY and 10 USDC total, ~30s of accrual gives ~5 microunits — visible.
+// At realistic 600 bps with the same balance/time, integer math rounds to ZERO. Override via
+// --apy-initial-bps / --apy-bumped-bps for realistic narratives once you have larger deposits.
+const INITIAL_APY_BPS = 4_000; // 40%
+const BUMPED_APY_BPS = 5_000; // 50% (mid-run rate change demonstrates dynamic rates)
+// Canonical Circle devnet USDC. Deployer cannot mint this, so the demo transfers from its own
+// USDC ATA when funding users / topping up the yield buffer.
+const CANONICAL_DEVNET_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 
 const PARTICIPANT_BUCKET_SLOT_COUNT = 9;
 const OWNER_INDEX_BUCKET_COUNT = 1024;
@@ -111,6 +119,7 @@ interface CliOptions {
   sleepSecsAfterDeposit: number;
   sleepSecsAfterApyBump: number;
   perUserUsdc: bigint;
+  yieldBufferUsdc: bigint;
   apyInitialBps: number;
   apyBumpedBps: number;
   protocolYieldBps: number;
@@ -123,7 +132,8 @@ function parseCliArgs(argv: string[]): CliOptions {
     network: "devnet",
     sleepSecsAfterDeposit: 30,
     sleepSecsAfterApyBump: 30,
-    perUserUsdc: 100_000_000n, // 100 USDC at 6dp
+    perUserUsdc: 5_000_000n, // 5 USDC per user (10 total) — well within a 60-USDC devnet balance.
+    yieldBufferUsdc: 1_000_000n, // 1 USDC reserved as simulated-yield buffer in liquidity_vault.
     apyInitialBps: INITIAL_APY_BPS,
     apyBumpedBps: BUMPED_APY_BPS,
     protocolYieldBps: PROTOCOL_YIELD_SHARE_BPS,
@@ -164,6 +174,9 @@ function parseCliArgs(argv: string[]): CliOptions {
         break;
       case "per-user-usdc":
         if (parsed) out.perUserUsdc = BigInt(parsed);
+        break;
+      case "yield-buffer-usdc":
+        if (parsed) out.yieldBufferUsdc = BigInt(parsed);
         break;
       case "apy-initial-bps":
         if (parsed) out.apyInitialBps = parseInt(parsed, 10);
@@ -402,10 +415,28 @@ async function resolveUsdcMint(
     console.log(`💵 Using provided USDC mint: ${mint.toBase58()}`);
     return mint;
   }
+  if (process.env.USDC_MINT) {
+    const mint = new PublicKey(process.env.USDC_MINT);
+    console.log(`💵 Using USDC mint from env: ${mint.toBase58()}`);
+    return mint;
+  }
 
-  // For demo purposes (devnet + localnet), spin up a deployer-controlled USDC-style mint and cache
-  // it in keys/<network>-demo-usdc-mint.json so reruns are idempotent.
   const network = inferNetwork(provider.connection.rpcEndpoint);
+
+  // Devnet/mainnet → use the canonical Circle USDC. Deployer is not the mint authority, so user
+  // funding and yield-buffer top-ups are SPL transfers from the deployer's USDC ATA (the deployer
+  // must hold enough real USDC).
+  if (network === "devnet" || network === "mainnet") {
+    const mint = new PublicKey(CANONICAL_DEVNET_USDC_MINT);
+    console.log(`💵 Using canonical ${network} USDC mint: ${mint.toBase58()}`);
+    console.log(
+      `   ℹ️ Deployer must hold enough real USDC: ` +
+        `(per_user_usdc × num_users) + yield_buffer_usdc + a small ATA-rent + tx-fees buffer.`
+    );
+    return mint;
+  }
+
+  // Localnet/testnet → spin up a deployer-controlled mint and cache it. Reruns are idempotent.
   const cachePath = path.join(process.cwd(), "keys", `${network}-demo-usdc-mint.json`);
   if (fs.existsSync(cachePath)) {
     const mintAddress = fs.readFileSync(cachePath, "utf8").trim();
@@ -432,6 +463,19 @@ async function resolveUsdcMint(
   return mint;
 }
 
+async function deployerIsMintAuthority(
+  provider: anchor.AnchorProvider,
+  mint: PublicKey
+): Promise<boolean> {
+  try {
+    const { getMint } = require("@solana/spl-token") as typeof import("@solana/spl-token");
+    const info = await getMint(provider.connection, mint, "confirmed");
+    return !!info.mintAuthority && info.mintAuthority.equals(provider.wallet.publicKey);
+  } catch {
+    return false;
+  }
+}
+
 async function fundUsdc(
   provider: anchor.AnchorProvider,
   mint: PublicKey,
@@ -447,10 +491,39 @@ async function fundUsdc(
     false,
     "confirmed"
   );
-  await mintTo(
+  if (await deployerIsMintAuthority(provider, mint)) {
+    await mintTo(
+      provider.connection,
+      payer,
+      mint,
+      ata.address,
+      payer,
+      Number(amount),
+      [],
+      { commitment: "confirmed" }
+    );
+    return ata.address;
+  }
+  // Deployer is not mint authority (real USDC). Transfer from the deployer's own USDC ATA.
+  const { transfer } = require("@solana/spl-token") as typeof import("@solana/spl-token");
+  const deployerAta = await getOrCreateAssociatedTokenAccount(
     provider.connection,
     payer,
     mint,
+    payer.publicKey,
+    false,
+    "confirmed"
+  );
+  if (deployerAta.amount < amount) {
+    throw new Error(
+      `Deployer USDC ATA ${deployerAta.address.toBase58()} has only ${deployerAta.amount} ` +
+        `(need at least ${amount}). Top up the deployer's USDC and retry.`
+    );
+  }
+  await transfer(
+    provider.connection,
+    payer,
+    deployerAta.address,
     ata.address,
     payer,
     Number(amount),
@@ -510,34 +583,65 @@ async function ensureLiquidityVaultYieldBuffer(
   liquidityVault: PublicKey,
   bufferAmount: bigint
 ): Promise<void> {
+  if (bufferAmount === 0n) {
+    console.log("   ℹ️ Yield buffer disabled (--yield-buffer-usdc=0).");
+    return;
+  }
   const payer = (provider.wallet as any).payer as Keypair;
-  // Are we mint authority? If not (e.g. canonical devnet USDC), skip — production reserves don't
-  // need buffers.
-  let mintInfo;
-  try {
-    const { getMint } = require("@solana/spl-token") as typeof import("@solana/spl-token");
-    mintInfo = await getMint(provider.connection, underlyingMint, "confirmed");
-  } catch (err) {
-    console.warn(`   (mint info unavailable: ${(err as Error).message}; skipping yield buffer)`);
-    return;
-  }
-  if (!mintInfo.mintAuthority || !mintInfo.mintAuthority.equals(payer.publicKey)) {
-    console.log(
-      `   ℹ️ Skipping yield buffer mint — deployer is not the mint authority for ${underlyingMint.toBase58()}.`
-    );
-    return;
-  }
   const current = await getAccount(provider.connection, liquidityVault, "confirmed").catch(() => null);
   if (current && current.amount >= bufferAmount) {
     console.log(`   ℹ️ Liquidity vault already buffered (${formatUsdc(current.amount)} USDC).`);
     return;
   }
   const topUp = bufferAmount - (current?.amount ?? 0n);
-  console.log(`💧 Topping up liquidity_vault with ${formatUsdc(topUp)} USDC (simulated-yield buffer)...`);
-  await mintTo(
+
+  // Path 1: deployer is mint authority → mint fresh tokens. Used for localnet/testnet demos.
+  if (await deployerIsMintAuthority(provider, underlyingMint)) {
+    console.log(
+      `💧 Topping up liquidity_vault with ${formatUsdc(topUp)} USDC ` +
+        `(simulated-yield buffer, minted by deployer)...`
+    );
+    await mintTo(
+      provider.connection,
+      payer,
+      underlyingMint,
+      liquidityVault,
+      payer,
+      Number(topUp),
+      [],
+      { commitment: "confirmed" }
+    );
+    console.log(`   ✓ Buffer in place.`);
+    return;
+  }
+
+  // Path 2: real USDC. Transfer from the deployer's USDC ATA into liquidity_vault. The deployer
+  // must hold enough real USDC; otherwise we surface a clear error.
+  const { transfer } = require("@solana/spl-token") as typeof import("@solana/spl-token");
+  const deployerAta = await getOrCreateAssociatedTokenAccount(
     provider.connection,
     payer,
     underlyingMint,
+    payer.publicKey,
+    false,
+    "confirmed"
+  );
+  if (deployerAta.amount < topUp) {
+    throw new Error(
+      `Yield-buffer top-up requires ${topUp} micro-USDC but deployer ATA ` +
+        `${deployerAta.address.toBase58()} only has ${deployerAta.amount}. ` +
+        `Top up the deployer with real USDC (or set --yield-buffer-usdc=0 to skip — ` +
+        `note redemptions may fail when the simulated yield exceeds rounding).`
+    );
+  }
+  console.log(
+    `💧 Topping up liquidity_vault with ${formatUsdc(topUp)} USDC ` +
+      `(simulated-yield buffer, transferred from deployer's USDC ATA)...`
+  );
+  await transfer(
+    provider.connection,
+    payer,
+    deployerAta.address,
     liquidityVault,
     payer,
     Number(topUp),
@@ -692,8 +796,12 @@ async function setupUser(
 ): Promise<DemoUser> {
   const keypair = Keypair.generate();
   console.log(`\n👤 Setting up ${label}: ${keypair.publicKey.toBase58()}`);
-  await airdropIfNeeded(provider.connection, keypair.publicKey, LAMPORTS_PER_SOL);
-  await fundLamportsFromDeployer(provider, keypair.publicKey, LAMPORTS_PER_SOL);
+  // ParticipantBucket alone needs ~0.069 SOL of rent (~9.7KB). Add ATA rents and tx fees and 0.15
+  // SOL is a safe per-user budget. Deployer covers it via fundLamportsFromDeployer when devnet's
+  // airdrop is rate-limited.
+  const perUserLamports = (LAMPORTS_PER_SOL * 15) / 100; // 0.15 SOL
+  await airdropIfNeeded(provider.connection, keypair.publicKey, perUserLamports);
+  await fundLamportsFromDeployer(provider, keypair.publicKey, perUserLamports);
 
   const usdcAta = await fundUsdc(provider, underlyingMint, keypair.publicKey, perUserUsdc);
   console.log(`   ✓ USDC ATA: ${usdcAta.toBase58()} (funded with ${formatUsdc(perUserUsdc)} USDC)`);
@@ -881,6 +989,14 @@ async function main(): Promise<void> {
 
   console.log(`📡 RPC: ${provider.connection.rpcEndpoint}`);
   console.log(`🔑 Deployer/authority: ${provider.wallet.publicKey.toBase58()}`);
+  if (!cli.bootstrapOnly) {
+    const totalUsdcNeeded = cli.perUserUsdc * 2n + cli.yieldBufferUsdc;
+    console.log(
+      `💰 USDC budget — per-user=${formatUsdc(cli.perUserUsdc)}, ` +
+        `yield-buffer=${formatUsdc(cli.yieldBufferUsdc)}, ` +
+        `total=${formatUsdc(totalUsdcNeeded)} USDC.`
+    );
+  }
 
   const agon = loadAgonProgram(provider, network);
   const mockYield = loadMockYieldProgram(provider, network);
@@ -903,12 +1019,15 @@ async function main(): Promise<void> {
     cli.apyInitialBps
   );
   // Pre-fund liquidity_vault with a USDC buffer so the simulated yield is actually redeemable.
-  // No-op when deployer is not mint authority (i.e. canonical devnet/mainnet USDC).
+  // - If deployer is the mint authority (localnet demo mint): mint the buffer.
+  // - Otherwise (real USDC): transfer the buffer from the deployer's own USDC ATA.
+  // Set --yield-buffer-usdc=0 to skip entirely (redemptions may fail if simulated yield exceeds
+  // rounding-floor in mock-yield).
   await ensureLiquidityVaultYieldBuffer(
     provider,
     underlyingMint,
     liquidityVault,
-    1_000_000_000n // 1000 USDC buffer (6dp) — generous for any demo run.
+    cli.yieldBufferUsdc
   );
   const { yieldStrategy, shareVault } = await ensureAgUsdcRegistered(
     provider,
