@@ -1,6 +1,6 @@
 /**
  * v7 — opt_in_yield / opt_out_yield internal balance moves between an owner's plain USDC bucket
- * and their agUSDC bucket. The wallet ATA is never touched by these handlers; underlying USDC
+ * and their ryUSDC bucket. The wallet ATA is never touched by these handlers; underlying USDC
  * moves entirely between protocol-owned vault PDAs (plain-USDC vault <-> mock-yield liquidity
  * vault), and on-chain shares move within ParticipantBucket slots.
  *
@@ -16,7 +16,7 @@
 import { expect } from "chai";
 
 import {
-  AG_USDC_TOKEN_ID,
+  RY_USDC_TOKEN_ID,
   accrueYieldForTest,
   assertYieldStrategySolvent,
   createFundedTokenAccount,
@@ -48,8 +48,8 @@ describe("v7 — opt_in_yield / opt_out_yield", () => {
     await getYieldBearingTestbed();
   });
 
-  describe("opt_in_yield (plain bucket -> agUSDC bucket)", () => {
-    it("moves available USDC into agUSDC; total_user_shares grows by exact amount; solvency holds", async function () {
+  describe("opt_in_yield (plain bucket -> ryUSDC bucket)", () => {
+    it("moves available USDC into ryUSDC; total_user_shares grows by exact amount; solvency holds", async function () {
       this.timeout(60_000);
 
       const alice = await createTestParticipant();
@@ -75,7 +75,7 @@ describe("v7 — opt_in_yield / opt_out_yield", () => {
       ).availableBalance.toNumber();
       const yieldBefore = getTokenBalance(
         aliceBefore,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       ).availableBalance.toNumber();
 
       await optInYieldForTest({
@@ -93,7 +93,7 @@ describe("v7 — opt_in_yield / opt_out_yield", () => {
       ).availableBalance.toNumber();
       const yieldAfter = getTokenBalance(
         aliceAfter,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       ).availableBalance.toNumber();
 
       expect(plainAfter).to.equal(plainBefore - 4 * ONE_USDC);
@@ -148,7 +148,7 @@ describe("v7 — opt_in_yield / opt_out_yield", () => {
     it("rejects opt-in when plain token's mint differs from strategy underlying", async function () {
       this.timeout(60_000);
 
-      // Register a foreign-mint plain token. Opt-in must reject because the agUSDC strategy's
+      // Register a foreign-mint plain token. Opt-in must reject because the ryUSDC strategy's
       // underlying is `primaryMint`, not this mint.
       const FOREIGN_TOKEN_ID = 60;
       const foreignToken = await registerTestToken(FOREIGN_TOKEN_ID, "FUSDT");
@@ -232,7 +232,7 @@ describe("v7 — opt_in_yield / opt_out_yield", () => {
       ).availableBalance.toNumber();
       const yieldAfter = getTokenBalance(
         eveAfter,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       ).availableBalance.toNumber();
       expect(plainAvAfter).to.equal(0);
       expect(yieldAfter).to.be.greaterThan(0);
@@ -255,7 +255,7 @@ describe("v7 — opt_in_yield / opt_out_yield", () => {
     });
   });
 
-  describe("opt_out_yield (agUSDC bucket -> plain bucket)", () => {
+  describe("opt_out_yield (ryUSDC bucket -> plain bucket)", () => {
     it("burns shares and credits redeemed USDC into plain bucket; solvency holds", async function () {
       this.timeout(60_000);
 
@@ -282,7 +282,7 @@ describe("v7 — opt_in_yield / opt_out_yield", () => {
       );
       const yieldBefore = getTokenBalance(
         gregBefore,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       ).availableBalance.toNumber();
       const plainBefore = getTokenBalance(
         gregBefore,
@@ -302,7 +302,7 @@ describe("v7 — opt_in_yield / opt_out_yield", () => {
       );
       const yieldAfter = getTokenBalance(
         gregAfter,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       ).availableBalance.toNumber();
       const plainAfter = getTokenBalance(
         gregAfter,
@@ -360,7 +360,7 @@ describe("v7 — opt_in_yield / opt_out_yield", () => {
       );
       const yieldShares = getTokenBalance(
         hankBefore,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       ).availableBalance.toNumber();
       const plainBefore = getTokenBalance(
         hankBefore,
@@ -431,7 +431,7 @@ describe("v7 — opt_in_yield / opt_out_yield", () => {
       );
       const sharesAfterIn = getTokenBalance(
         midState,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       ).availableBalance.toNumber();
       expect(sharesAfterIn).to.be.greaterThan(0);
 
@@ -449,7 +449,7 @@ describe("v7 — opt_in_yield / opt_out_yield", () => {
       ).availableBalance.toNumber();
       const yieldAfter = getTokenBalance(
         ivyAfter,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       ).availableBalance.toNumber();
 
       expect(yieldAfter).to.equal(0);

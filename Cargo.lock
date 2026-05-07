@@ -39,20 +39,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agon-protocol"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "anchor-spl",
- "bytemuck",
- "hex-literal",
- "mock-yield",
- "proptest",
- "sha2 0.10.9",
- "solana-allocator",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1461,6 +1447,20 @@ dependencies = [
  "quick-error",
  "tempfile",
  "wait-timeout",
+]
+
+[[package]]
+name = "ryvo-protocol"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+ "bytemuck",
+ "hex-literal",
+ "mock-yield",
+ "proptest",
+ "sha2 0.10.9",
+ "solana-allocator",
 ]
 
 [[package]]

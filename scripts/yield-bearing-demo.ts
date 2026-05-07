@@ -4,9 +4,9 @@
  *
  * End-to-end flow:
  *   1. Bootstrap (idempotent) — creates a USDC-style mint (deployer-controlled), initialises a
- *      mock-yield Reserve at 6% APY, registers agUSDC as token_id=1 (kind=YieldBearing) in the
- *      Agon protocol.
- *   2. Two users (Alice, Bob) deposit USDC; the protocol auto-converts to agUSDC shares.
+ *      mock-yield Reserve at 6% APY, registers ryUSDC as token_id=1 (kind=YieldBearing) in the
+ *      Ryvo network.
+ *   2. Two users (Alice, Bob) deposit USDC; the protocol auto-converts to ryUSDC shares.
  *   3. Sleep + permissionless accrue_yield → user_index_q64 advances, protocol_owed_underlying
  *      grows.
  *   4. Mid-run update_apy_bps(900) (6% → 9%), then sleep + accrue again to show dynamic rates.
@@ -42,7 +42,7 @@ import {
 import { createHash } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
-import { AgonProtocol } from "../target/types/agon_protocol";
+import { RyvoProtocol } from "../target/types/ryvo_protocol";
 import { MockYield } from "../target/types/mock_yield";
 import {
   Q64,
@@ -58,7 +58,7 @@ const { loadProjectRpcEnv, resolveProjectRpcUrl } = require("./lib/rpc-env.cjs")
 loadProjectRpcEnv(process.cwd());
 
 // ---------------------------------------------------------------------------
-// Constants (mirrored from agon-protocol/state + mock-yield/lib.rs)
+// Constants (mirrored from ryvo-protocol/state + mock-yield/lib.rs)
 // ---------------------------------------------------------------------------
 
 const TOKEN_REGISTRY_SEED = Buffer.from("token-registry");
@@ -73,8 +73,8 @@ const LIQUIDITY_VAULT_SEED = Buffer.from("liquidity-vault");
 
 const USDC_TOKEN_ID = 1;
 const USDC_SYMBOL = "USDC";
-const AG_USDC_TOKEN_ID = 2;
-const AG_USDC_SYMBOL = "agUSDC";
+const RY_USDC_TOKEN_ID = 2;
+const RY_USDC_SYMBOL = "ryUSDC";
 const PROTOCOL_YIELD_SHARE_BPS = 3_333; // ~33.33% of yield to protocol (6% gross → ~4% net for users).
 // Demo defaults — cranked up so visible yield accrues in <60s even with small balances.
 // Mock-yield uses linear integer accrual: yield = total * apy_bps * dt / (10_000 * 31_536_000).
@@ -89,7 +89,7 @@ const CANONICAL_DEVNET_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
 
 const PARTICIPANT_BUCKET_SLOT_COUNT = 9;
 const OWNER_INDEX_BUCKET_COUNT = 1024;
-// Layout constants mirrored from agon-protocol::state::bucket_state. The struct is gated
+// Layout constants mirrored from ryvo-protocol::state::bucket_state. The struct is gated
 // `#[cfg_attr(not(target_os = "solana"), account)]` so it does NOT show up in the IDL types
 // and we cannot use `program.account.participantBucket.fetch(...)`. Instead we decode bytes.
 const PB_SLOTS_OFFSET = 8 + 4 + 1; // discriminator(8) + bucket_id(4) + bump(1)
@@ -107,7 +107,7 @@ const MAX_BUCKET_TOKEN_BALANCES = 16;
 const BPF_LOADER_UPGRADEABLE_PROGRAM_ID = new PublicKey(
   "BPFLoaderUpgradeab1e11111111111111111111111"
 );
-const MESSAGE_DOMAIN_TAG = Buffer.from("agon-message-domain-v1", "utf8");
+const MESSAGE_DOMAIN_TAG = Buffer.from("ryvo-message-domain-v1", "utf8");
 
 type SupportedNetwork = "devnet" | "mainnet" | "testnet" | "localnet";
 
@@ -280,7 +280,7 @@ function loadProvider(network: SupportedNetwork): anchor.AnchorProvider {
 
 function resolveProgramId(
   net: SupportedNetwork,
-  programName: "agon_protocol" | "mock_yield",
+  programName: "ryvo_protocol" | "mock_yield",
   fallback?: string
 ): PublicKey {
   const anchorTomlPath = path.join(__dirname, "..", "Anchor.toml");
@@ -302,11 +302,11 @@ function resolveProgramId(
   throw new Error(`Could not resolve program id for ${programName} on ${net}`);
 }
 
-function loadAgonProgram(provider: anchor.AnchorProvider, net: SupportedNetwork): Program<AgonProtocol> {
-  const idlPath = path.join(__dirname, "..", "target", "idl", "agon_protocol.json");
+function loadRyvoProgram(provider: anchor.AnchorProvider, net: SupportedNetwork): Program<RyvoProtocol> {
+  const idlPath = path.join(__dirname, "..", "target", "idl", "ryvo_protocol.json");
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf8"));
-  const programId = resolveProgramId(net, "agon_protocol", idl.address);
-  return new Program({ ...idl, address: programId.toString() } as AgonProtocol, provider);
+  const programId = resolveProgramId(net, "ryvo_protocol", idl.address);
+  return new Program({ ...idl, address: programId.toString() } as RyvoProtocol, provider);
 }
 
 function loadMockYieldProgram(provider: anchor.AnchorProvider, net: SupportedNetwork): Program<MockYield> {
@@ -662,31 +662,31 @@ async function ensureLiquidityVaultYieldBuffer(
 
 async function ensureProtocolInitialised(
   provider: anchor.AnchorProvider,
-  agon: Program<AgonProtocol>,
+  ryvo: Program<RyvoProtocol>,
   network: SupportedNetwork,
   feeRecipient: PublicKey
 ): Promise<void> {
-  const globalConfigPda = findGlobalConfigPda(agon.programId);
+  const globalConfigPda = findGlobalConfigPda(ryvo.programId);
   const existing = await provider.connection.getAccountInfo(globalConfigPda);
   if (existing) {
-    console.log(`✅ Agon protocol already initialised (GlobalConfig: ${globalConfigPda.toBase58()})`);
+    console.log(`✅ Ryvo network already initialised (GlobalConfig: ${globalConfigPda.toBase58()})`);
     return;
   }
-  console.log("⚙️ Initializing Agon protocol GlobalConfig + TokenRegistry...");
+  console.log("⚙️ Initializing Ryvo network GlobalConfig + TokenRegistry...");
   const [programDataPda] = PublicKey.findProgramAddressSync(
-    [agon.programId.toBuffer()],
+    [ryvo.programId.toBuffer()],
     BPF_LOADER_UPGRADEABLE_PROGRAM_ID
   );
-  await agon.methods
+  await ryvo.methods
     .initialize(chainIdForNetwork(network), 30, new anchor.BN(0), provider.wallet.publicKey)
     .accounts({
       feeRecipient,
       upgradeAuthority: provider.wallet.publicKey,
-      program: agon.programId,
+      program: ryvo.programId,
       programData: programDataPda,
     } as any)
     .rpc();
-  await agon.methods
+  await ryvo.methods
     .initializeTokenRegistry()
     .accounts({
       globalConfig: globalConfigPda,
@@ -698,11 +698,11 @@ async function ensureProtocolInitialised(
 
 async function ensureUsdcRegistered(
   provider: anchor.AnchorProvider,
-  agon: Program<AgonProtocol>,
+  ryvo: Program<RyvoProtocol>,
   underlyingMint: PublicKey
 ): Promise<void> {
-  const tokenRegistryPda = findTokenRegistryPda(agon.programId);
-  const vaultTokenAccount = findVaultTokenAccountPda(agon.programId, USDC_TOKEN_ID);
+  const tokenRegistryPda = findTokenRegistryPda(ryvo.programId);
+  const vaultTokenAccount = findVaultTokenAccountPda(ryvo.programId, USDC_TOKEN_ID);
 
   const existing = await provider.connection.getAccountInfo(vaultTokenAccount);
   if (existing) {
@@ -713,7 +713,7 @@ async function ensureUsdcRegistered(
   }
 
   console.log(`🪙 Registering plain USDC as token_id=${USDC_TOKEN_ID}...`);
-  await agon.methods
+  await ryvo.methods
     .registerToken(USDC_TOKEN_ID, symbolBytes(USDC_SYMBOL))
     .accounts({
       mint: underlyingMint,
@@ -726,9 +726,9 @@ async function ensureUsdcRegistered(
   console.log(`   ✓ Plain USDC vault: ${vaultTokenAccount.toBase58()}`);
 }
 
-async function ensureAgUsdcRegistered(
+async function ensureRyUsdcRegistered(
   provider: anchor.AnchorProvider,
-  agon: Program<AgonProtocol>,
+  ryvo: Program<RyvoProtocol>,
   mockYield: Program<MockYield>,
   underlyingMint: PublicKey,
   reserve: PublicKey,
@@ -736,22 +736,22 @@ async function ensureAgUsdcRegistered(
   liquidityVault: PublicKey,
   protocolYieldBps: number
 ): Promise<{ yieldStrategy: PublicKey; shareVault: PublicKey }> {
-  const yieldStrategyPda = findYieldStrategyPda(agon.programId, AG_USDC_TOKEN_ID);
-  const shareVaultPda = findYieldShareVaultPda(agon.programId, AG_USDC_TOKEN_ID);
+  const yieldStrategyPda = findYieldStrategyPda(ryvo.programId, RY_USDC_TOKEN_ID);
+  const shareVaultPda = findYieldShareVaultPda(ryvo.programId, RY_USDC_TOKEN_ID);
 
   const existing = await provider.connection.getAccountInfo(yieldStrategyPda);
   if (existing) {
     console.log(
-      `🪙 agUSDC (token_id=${AG_USDC_TOKEN_ID}) already registered. YieldStrategy: ${yieldStrategyPda.toBase58()}`
+      `🪙 ryUSDC (token_id=${RY_USDC_TOKEN_ID}) already registered. YieldStrategy: ${yieldStrategyPda.toBase58()}`
     );
     return { yieldStrategy: yieldStrategyPda, shareVault: shareVaultPda };
   }
 
   console.log(
-    `🪙 Registering agUSDC as token_id=${AG_USDC_TOKEN_ID} (protocol_yield_share_bps=${protocolYieldBps})...`
+    `🪙 Registering ryUSDC as token_id=${RY_USDC_TOKEN_ID} (protocol_yield_share_bps=${protocolYieldBps})...`
   );
-  await agon.methods
-    .registerYieldBearingToken(AG_USDC_TOKEN_ID, symbolBytes(AG_USDC_SYMBOL), protocolYieldBps)
+  await ryvo.methods
+    .registerYieldBearingToken(RY_USDC_TOKEN_ID, symbolBytes(RY_USDC_SYMBOL), protocolYieldBps)
     .accounts({
       underlyingMint,
       yieldProgram: mockYield.programId,
@@ -827,7 +827,7 @@ async function fundLamportsFromDeployer(
 
 async function setupUser(
   provider: anchor.AnchorProvider,
-  agon: Program<AgonProtocol>,
+  ryvo: Program<RyvoProtocol>,
   underlyingMint: PublicKey,
   feeRecipient: PublicKey,
   label: string,
@@ -846,13 +846,13 @@ async function setupUser(
   console.log(`   ✓ USDC ATA: ${usdcAta.toBase58()} (funded with ${formatUsdc(perUserUsdc)} USDC)`);
 
   // Initialize participant.
-  const globalConfigPda = findGlobalConfigPda(agon.programId);
-  const config: any = await agon.account.globalConfig.fetch(globalConfigPda);
+  const globalConfigPda = findGlobalConfigPda(ryvo.programId);
+  const config: any = await ryvo.account.globalConfig.fetch(globalConfigPda);
   const participantId = Number(config.nextParticipantId);
-  const participantBucket = findParticipantBucketPda(agon.programId, participantId);
-  const ownerIndexBucket = findOwnerIndexBucketPda(agon.programId, keypair.publicKey);
+  const participantBucket = findParticipantBucketPda(ryvo.programId, participantId);
+  const ownerIndexBucket = findOwnerIndexBucketPda(ryvo.programId, keypair.publicKey);
 
-  await agon.methods
+  await ryvo.methods
     .initializeParticipant(
       participantBucketIdForParticipantId(participantId),
       ownerIndexBucketIdForOwner(keypair.publicKey)
@@ -890,10 +890,10 @@ interface StrategyState {
 }
 
 async function fetchYieldStrategy(
-  agon: Program<AgonProtocol>,
+  ryvo: Program<RyvoProtocol>,
   yieldStrategyPda: PublicKey
 ): Promise<StrategyState> {
-  const acc: any = await agon.account.yieldStrategy.fetch(yieldStrategyPda);
+  const acc: any = await ryvo.account.yieldStrategy.fetch(yieldStrategyPda);
   return {
     userIndexQ64: BigInt(acc.userIndexQ64.toString()),
     totalUserShares: BigInt(acc.totalUserShares.toString()),
@@ -903,12 +903,12 @@ async function fetchYieldStrategy(
 }
 
 async function readBucketBalanceForToken(
-  agon: Program<AgonProtocol>,
+  ryvo: Program<RyvoProtocol>,
   participantBucketPda: PublicKey,
   participantId: number,
   tokenId: number
 ): Promise<{ available: bigint; withdrawing: bigint; withdrawalUnlockAt: bigint }> {
-  const info = await agon.provider.connection.getAccountInfo(participantBucketPda);
+  const info = await ryvo.provider.connection.getAccountInfo(participantBucketPda);
   if (!info) return { available: 0n, withdrawing: 0n, withdrawalUnlockAt: 0n };
   const data = info.data;
   const slotIndex = participantId % PARTICIPANT_BUCKET_SLOT_COUNT;
@@ -950,7 +950,7 @@ async function getUsdcBalance(connection: Connection, ata: PublicKey): Promise<b
 
 async function printSnapshot(
   label: string,
-  agon: Program<AgonProtocol>,
+  ryvo: Program<RyvoProtocol>,
   yieldStrategyPda: PublicKey,
   alice: DemoUser,
   bob: DemoUser,
@@ -958,7 +958,7 @@ async function printSnapshot(
   shareVault: PublicKey
 ): Promise<void> {
   console.log(`\n📊 [${label}]`);
-  const strategy = await fetchYieldStrategy(agon, yieldStrategyPda);
+  const strategy = await fetchYieldStrategy(ryvo, yieldStrategyPda);
   console.log(
     `   strategy.user_index_q64        = ${strategy.userIndexQ64.toString()}` +
       ` (≈ ${(Number(strategy.userIndexQ64) / Number(Q64)).toFixed(8)}× per share)`
@@ -974,36 +974,36 @@ async function printSnapshot(
   );
 
   const aliceBuckets = await readBucketBalanceForToken(
-    agon,
+    ryvo,
     alice.participantBucket,
     alice.participantId,
-    AG_USDC_TOKEN_ID
+    RY_USDC_TOKEN_ID
   );
   const bobBuckets = await readBucketBalanceForToken(
-    agon,
+    ryvo,
     bob.participantBucket,
     bob.participantId,
-    AG_USDC_TOKEN_ID
+    RY_USDC_TOKEN_ID
   );
 
   console.log(
-    `   Alice agUSDC shares: avail=${aliceBuckets.available.toString()}, withdrawing=${aliceBuckets.withdrawing.toString()}` +
+    `   Alice ryUSDC shares: avail=${aliceBuckets.available.toString()}, withdrawing=${aliceBuckets.withdrawing.toString()}` +
       ` (≈ ${formatUsdc(agSharesToUsdc({ userIndexQ64: strategy.userIndexQ64 }, aliceBuckets.available))} USDC available)`
   );
   console.log(
-    `   Bob   agUSDC shares: avail=${bobBuckets.available.toString()}, withdrawing=${bobBuckets.withdrawing.toString()}` +
+    `   Bob   ryUSDC shares: avail=${bobBuckets.available.toString()}, withdrawing=${bobBuckets.withdrawing.toString()}` +
       ` (≈ ${formatUsdc(agSharesToUsdc({ userIndexQ64: strategy.userIndexQ64 }, bobBuckets.available))} USDC available)`
   );
 
-  const aliceUsdc = await getUsdcBalance(agon.provider.connection, alice.usdcAta);
-  const bobUsdc = await getUsdcBalance(agon.provider.connection, bob.usdcAta);
-  const feeUsdc = await getUsdcBalance(agon.provider.connection, feeRecipientUsdcAta);
+  const aliceUsdc = await getUsdcBalance(ryvo.provider.connection, alice.usdcAta);
+  const bobUsdc = await getUsdcBalance(ryvo.provider.connection, bob.usdcAta);
+  const feeUsdc = await getUsdcBalance(ryvo.provider.connection, feeRecipientUsdcAta);
   console.log(`   Alice wallet USDC: ${formatUsdc(aliceUsdc)}`);
   console.log(`   Bob   wallet USDC: ${formatUsdc(bobUsdc)}`);
   console.log(`   Fee recipient USDC: ${formatUsdc(feeUsdc)}`);
 
   try {
-    const shareVaultAcc = await getAccount(agon.provider.connection, shareVault, "confirmed");
+    const shareVaultAcc = await getAccount(ryvo.provider.connection, shareVault, "confirmed");
     console.log(`   share_vault cUSDC supply: ${shareVaultAcc.amount.toString()}`);
   } catch (err) {
     console.log(`   share_vault not yet readable (${(err as Error).message})`);
@@ -1037,9 +1037,9 @@ async function main(): Promise<void> {
     );
   }
 
-  const agon = loadAgonProgram(provider, network);
+  const ryvo = loadRyvoProgram(provider, network);
   const mockYield = loadMockYieldProgram(provider, network);
-  console.log(`📦 agon-protocol program id: ${agon.programId.toBase58()}`);
+  console.log(`📦 ryvo-protocol program id: ${ryvo.programId.toBase58()}`);
   console.log(`📦 mock-yield   program id: ${mockYield.programId.toBase58()}`);
 
   // -------------------------------------------------------------------------
@@ -1048,7 +1048,7 @@ async function main(): Promise<void> {
   const feeRecipient = cli.feeRecipient
     ? new PublicKey(cli.feeRecipient)
     : provider.wallet.publicKey;
-  await ensureProtocolInitialised(provider, agon, network, feeRecipient);
+  await ensureProtocolInitialised(provider, ryvo, network, feeRecipient);
 
   const underlyingMint = await resolveUsdcMint(provider, cli);
   const { reserve, shareMint, liquidityVault } = await ensureMockYieldReserve(
@@ -1068,11 +1068,11 @@ async function main(): Promise<void> {
     liquidityVault,
     cli.yieldBufferUsdc
   );
-  // v7: register plain USDC at token_id=1 BEFORE registering agUSDC at token_id=2.
-  await ensureUsdcRegistered(provider, agon, underlyingMint);
-  const { yieldStrategy, shareVault } = await ensureAgUsdcRegistered(
+  // v7: register plain USDC at token_id=1 BEFORE registering ryUSDC at token_id=2.
+  await ensureUsdcRegistered(provider, ryvo, underlyingMint);
+  const { yieldStrategy, shareVault } = await ensureRyUsdcRegistered(
     provider,
-    agon,
+    ryvo,
     mockYield,
     underlyingMint,
     reserve,
@@ -1102,16 +1102,16 @@ async function main(): Promise<void> {
   // 2. User setup + deposits
   // -------------------------------------------------------------------------
   console.log("\n--- Phase 2: deposits ---");
-  const alice = await setupUser(provider, agon, underlyingMint, feeRecipient, "Alice", cli.perUserUsdc);
-  const bob = await setupUser(provider, agon, underlyingMint, feeRecipient, "Bob", cli.perUserUsdc);
+  const alice = await setupUser(provider, ryvo, underlyingMint, feeRecipient, "Alice", cli.perUserUsdc);
+  const bob = await setupUser(provider, ryvo, underlyingMint, feeRecipient, "Bob", cli.perUserUsdc);
 
   // Alice takes the atomic path: `deposit_yield_bearing` moves USDC from her wallet straight
-  // into agUSDC in one transaction.
+  // into ryUSDC in one transaction.
   console.log(
-    `\n💸 Alice (atomic path) deposits ${formatUsdc(cli.perUserUsdc)} USDC -> agUSDC via deposit_yield_bearing...`
+    `\n💸 Alice (atomic path) deposits ${formatUsdc(cli.perUserUsdc)} USDC -> ryUSDC via deposit_yield_bearing...`
   );
-  await agon.methods
-    .depositYieldBearing(AG_USDC_TOKEN_ID, new anchor.BN(cli.perUserUsdc.toString()))
+  await ryvo.methods
+    .depositYieldBearing(RY_USDC_TOKEN_ID, new anchor.BN(cli.perUserUsdc.toString()))
     .accounts({
       participantBucket: alice.participantBucket,
       ownerIndexBucket: alice.ownerIndexBucket,
@@ -1135,13 +1135,13 @@ async function main(): Promise<void> {
   console.log(
     `\n💸 Bob (opt-in path) deposits ${formatUsdc(cli.perUserUsdc)} USDC -> plain USDC bucket via deposit...`
   );
-  await agon.methods
+  await ryvo.methods
     .deposit(USDC_TOKEN_ID, new anchor.BN(cli.perUserUsdc.toString()))
     .accounts({
       participantBucket: bob.participantBucket,
       ownerIndexBucket: bob.ownerIndexBucket,
       ownerTokenAccount: bob.usdcAta,
-      vaultTokenAccount: findVaultTokenAccountPda(agon.programId, USDC_TOKEN_ID),
+      vaultTokenAccount: findVaultTokenAccountPda(ryvo.programId, USDC_TOKEN_ID),
       owner: bob.keypair.publicKey,
       tokenProgram: TOKEN_PROGRAM_ID,
     } as any)
@@ -1152,11 +1152,11 @@ async function main(): Promise<void> {
   console.log(
     `\n🔁 Bob now opts that ${formatUsdc(cli.perUserUsdc)} USDC into yield via opt_in_yield...`
   );
-  await agon.methods
-    .optInYield(USDC_TOKEN_ID, AG_USDC_TOKEN_ID, new anchor.BN(cli.perUserUsdc.toString()))
+  await ryvo.methods
+    .optInYield(USDC_TOKEN_ID, RY_USDC_TOKEN_ID, new anchor.BN(cli.perUserUsdc.toString()))
     .accounts({
       yieldStrategy,
-      plainVaultTokenAccount: findVaultTokenAccountPda(agon.programId, USDC_TOKEN_ID),
+      plainVaultTokenAccount: findVaultTokenAccountPda(ryvo.programId, USDC_TOKEN_ID),
       participantBucket: bob.participantBucket,
       ownerIndexBucket: bob.ownerIndexBucket,
       yieldProgram: mockYield.programId,
@@ -1170,11 +1170,11 @@ async function main(): Promise<void> {
     } as any)
     .signers([bob.keypair])
     .rpc();
-  console.log(`   ✓ Bob opt_in_yield confirmed — Bob now holds agUSDC like Alice.`);
+  console.log(`   ✓ Bob opt_in_yield confirmed — Bob now holds ryUSDC like Alice.`);
 
   await printSnapshot(
     "after deposits (Alice atomic + Bob opt-in)",
-    agon,
+    ryvo,
     yieldStrategy,
     alice,
     bob,
@@ -1190,7 +1190,7 @@ async function main(): Promise<void> {
   );
   await sleep(cli.sleepSecsAfterDeposit * 1000);
 
-  await agon.methods
+  await ryvo.methods
     .accrueYield()
     .accounts({
       yieldStrategy,
@@ -1203,7 +1203,7 @@ async function main(): Promise<void> {
   console.log(`   ✓ accrue_yield #1`);
   await printSnapshot(
     `after first accrue (${cli.apyInitialBps / 100}% APY for ${cli.sleepSecsAfterDeposit}s)`,
-    agon,
+    ryvo,
     yieldStrategy,
     alice,
     bob,
@@ -1224,7 +1224,7 @@ async function main(): Promise<void> {
   console.log(`   ✓ Reserve APY updated to ${cli.apyBumpedBps / 100}%`);
 
   await sleep(cli.sleepSecsAfterApyBump * 1000);
-  await agon.methods
+  await ryvo.methods
     .accrueYield()
     .accounts({
       yieldStrategy,
@@ -1237,7 +1237,7 @@ async function main(): Promise<void> {
   console.log(`   ✓ accrue_yield #2`);
   await printSnapshot(
     `after second accrue (post APY bump)`,
-    agon,
+    ryvo,
     yieldStrategy,
     alice,
     bob,
@@ -1248,31 +1248,31 @@ async function main(): Promise<void> {
   // -------------------------------------------------------------------------
   // 4.5. Demonstrate opt_out_yield -> opt_in_yield round-trip on Bob's bucket.
   // -------------------------------------------------------------------------
-  // Bob opts a quarter of his agUSDC shares back to plain USDC, then opts back in. This proves
+  // Bob opts a quarter of his ryUSDC shares back to plain USDC, then opts back in. This proves
   // both directions of v7's internal yield toggle work mid-flight, after yield has accrued. The
   // round-trip leaves at most 1-lamport of dust in the share_vault per call (attributed to all
   // users on the next accrual).
   {
     const balances = await readBucketBalanceForToken(
-      agon,
+      ryvo,
       bob.participantBucket,
       bob.participantId,
-      AG_USDC_TOKEN_ID
+      RY_USDC_TOKEN_ID
     );
     const quarterShares = balances.available / 4n;
     if (quarterShares > 0n) {
       console.log(
-        `\n--- Phase 4.5: opt_out_yield round-trip (Bob, ${quarterShares.toString()} agUSDC shares) ---`
+        `\n--- Phase 4.5: opt_out_yield round-trip (Bob, ${quarterShares.toString()} ryUSDC shares) ---`
       );
-      await agon.methods
+      await ryvo.methods
         .optOutYield(
-          AG_USDC_TOKEN_ID,
+          RY_USDC_TOKEN_ID,
           USDC_TOKEN_ID,
           new anchor.BN(quarterShares.toString())
         )
         .accounts({
           yieldStrategy,
-          plainVaultTokenAccount: findVaultTokenAccountPda(agon.programId, USDC_TOKEN_ID),
+          plainVaultTokenAccount: findVaultTokenAccountPda(ryvo.programId, USDC_TOKEN_ID),
           participantBucket: bob.participantBucket,
           ownerIndexBucket: bob.ownerIndexBucket,
           yieldProgram: mockYield.programId,
@@ -1289,7 +1289,7 @@ async function main(): Promise<void> {
       console.log(`   ✓ Bob opt_out_yield confirmed (shares -> plain USDC bucket).`);
 
       const plainAfterOptOut = await readBucketBalanceForToken(
-        agon,
+        ryvo,
         bob.participantBucket,
         bob.participantId,
         USDC_TOKEN_ID
@@ -1299,15 +1299,15 @@ async function main(): Promise<void> {
         `   Bob plain USDC bucket: avail=${formatUsdc(optBackInAmount)} USDC (will opt this all back into yield).`
       );
 
-      await agon.methods
+      await ryvo.methods
         .optInYield(
           USDC_TOKEN_ID,
-          AG_USDC_TOKEN_ID,
+          RY_USDC_TOKEN_ID,
           new anchor.BN(optBackInAmount.toString())
         )
         .accounts({
           yieldStrategy,
-          plainVaultTokenAccount: findVaultTokenAccountPda(agon.programId, USDC_TOKEN_ID),
+          plainVaultTokenAccount: findVaultTokenAccountPda(ryvo.programId, USDC_TOKEN_ID),
           participantBucket: bob.participantBucket,
           ownerIndexBucket: bob.ownerIndexBucket,
           yieldProgram: mockYield.programId,
@@ -1321,11 +1321,11 @@ async function main(): Promise<void> {
         } as any)
         .signers([bob.keypair])
         .rpc();
-      console.log(`   ✓ Bob opt_in_yield confirmed — back to agUSDC at the current index.`);
+      console.log(`   ✓ Bob opt_in_yield confirmed — back to ryUSDC at the current index.`);
 
       await printSnapshot(
         "after Bob opt_out + opt_in round-trip",
-        agon,
+        ryvo,
         yieldStrategy,
         alice,
         bob,
@@ -1338,14 +1338,14 @@ async function main(): Promise<void> {
   // -------------------------------------------------------------------------
   // 5. Protocol claims its fee
   // -------------------------------------------------------------------------
-  const strategyBeforeClaim = await fetchYieldStrategy(agon, yieldStrategy);
+  const strategyBeforeClaim = await fetchYieldStrategy(ryvo, yieldStrategy);
   if (strategyBeforeClaim.protocolOwedUnderlying > 0n) {
     console.log(
       `\n--- Phase 5: claim ${formatUsdc(strategyBeforeClaim.protocolOwedUnderlying)} USDC of protocol yield ---`
     );
     const claimAmount = strategyBeforeClaim.protocolOwedUnderlying;
-    await agon.methods
-      .claimProtocolYieldFee(AG_USDC_TOKEN_ID, new anchor.BN(claimAmount.toString()))
+    await ryvo.methods
+      .claimProtocolYieldFee(RY_USDC_TOKEN_ID, new anchor.BN(claimAmount.toString()))
       .accounts({
         yieldStrategy,
         yieldProgram: mockYield.programId,
@@ -1362,7 +1362,7 @@ async function main(): Promise<void> {
     console.log(`   ✓ Protocol yield claimed.`);
     await printSnapshot(
       "after claim_protocol_yield_fee",
-      agon,
+      ryvo,
       yieldStrategy,
       alice,
       bob,
@@ -1376,23 +1376,23 @@ async function main(): Promise<void> {
   // -------------------------------------------------------------------------
   // 6. Users withdraw
   // -------------------------------------------------------------------------
-  console.log("\n--- Phase 6: users withdraw all agUSDC -> USDC ---");
+  console.log("\n--- Phase 6: users withdraw all ryUSDC -> USDC ---");
   for (const user of [alice, bob]) {
     const balances = await readBucketBalanceForToken(
-      agon,
+      ryvo,
       user.participantBucket,
       user.participantId,
-      AG_USDC_TOKEN_ID
+      RY_USDC_TOKEN_ID
     );
     const shares = balances.available;
     if (shares === 0n) {
-      console.log(`   ⚠️ ${user.label} has no agUSDC shares to withdraw, skipping.`);
+      console.log(`   ⚠️ ${user.label} has no ryUSDC shares to withdraw, skipping.`);
       continue;
     }
-    console.log(`\n👤 ${user.label} withdrawing ${shares.toString()} agUSDC shares...`);
-    await agon.methods
+    console.log(`\n👤 ${user.label} withdrawing ${shares.toString()} ryUSDC shares...`);
+    await ryvo.methods
       .requestWithdrawalYieldBearing(
-        AG_USDC_TOKEN_ID,
+        RY_USDC_TOKEN_ID,
         new anchor.BN(shares.toString()),
         user.usdcAta
       )
@@ -1406,8 +1406,8 @@ async function main(): Promise<void> {
       .rpc();
     console.log(`   ✓ Withdrawal requested.`);
 
-    await agon.methods
-      .executeWithdrawalYieldBearing(AG_USDC_TOKEN_ID, user.participantId)
+    await ryvo.methods
+      .executeWithdrawalYieldBearing(RY_USDC_TOKEN_ID, user.participantId)
       .accounts({
         participantBucket: user.participantBucket,
         yieldProgram: mockYield.programId,
@@ -1421,13 +1421,13 @@ async function main(): Promise<void> {
         tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
       .rpc();
-    const finalUsdc = await getUsdcBalance(agon.provider.connection, user.usdcAta);
+    const finalUsdc = await getUsdcBalance(ryvo.provider.connection, user.usdcAta);
     console.log(`   ✓ Withdrawal executed. ${user.label} wallet USDC: ${formatUsdc(finalUsdc)}`);
   }
 
   await printSnapshot(
     "final",
-    agon,
+    ryvo,
     yieldStrategy,
     alice,
     bob,

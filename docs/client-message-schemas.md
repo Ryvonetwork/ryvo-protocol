@@ -14,9 +14,9 @@ Replay protection comes from:
 
 Participant IDs are permanent for the lifetime of a deployment, and payment lanes are permanent per `payer_id + payee_id + token_id`.
 
-## `agon-cmt-v5`
+## `ryvo-cmt-v5`
 
-`agon-cmt-v5` is the unilateral cumulative commitment format used by:
+`ryvo-cmt-v5` is the unilateral cumulative commitment format used by:
 
 - `settle_individual`
 - `settle_commitment_bundle`
@@ -59,9 +59,9 @@ Operator or coordinator compensation is not embedded in the unilateral message.
 If a service flow needs to pay an operator, that payment should be represented as
 its own ordinary lane commitment.
 
-## `agon-round-v4`
+## `ryvo-round-v4`
 
-`agon-round-v4` is the cooperative clearing-round format used by `settle_clearing_round`.
+`ryvo-round-v4` is the cooperative clearing-round format used by `settle_clearing_round`.
 
 ### Fixed Header
 
@@ -106,7 +106,7 @@ Each channel entry is:
 
 The live cooperative path today is:
 
-- one shared `agon-round-v4` message
+- one shared `ryvo-round-v4` message
 - one Ed25519 signature per participant
 - optional v0 transactions with Address Lookup Tables to compress account keys
 

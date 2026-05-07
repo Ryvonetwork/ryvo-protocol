@@ -62,14 +62,14 @@ if [[ "$NETWORK" != "devnet" && "$NETWORK" != "mainnet" ]]; then
   exit 1
 fi
 
-SOLANA_BIN="${AGON_SOLANA_BIN:-$HOME/.local/share/agave-v4-beta/active_release/bin/solana}"
-SOLANA_KEYGEN_BIN="${AGON_SOLANA_KEYGEN_BIN:-$HOME/.local/share/agave-v4-beta/active_release/bin/solana-keygen}"
+SOLANA_BIN="${RYVO_SOLANA_BIN:-$HOME/.local/share/agave-v4-beta/active_release/bin/solana}"
+SOLANA_KEYGEN_BIN="${RYVO_SOLANA_KEYGEN_BIN:-$HOME/.local/share/agave-v4-beta/active_release/bin/solana-keygen}"
 RPC_URL="$(resolve_project_rpc_url "$NETWORK")"
 
-PROGRAM_SO="target/deploy/agon_protocol.so"
-PROGRAM_KEYPAIR="target/deploy/agon_protocol-keypair.json"
+PROGRAM_SO="target/deploy/ryvo_protocol.so"
+PROGRAM_KEYPAIR="target/deploy/ryvo_protocol-keypair.json"
 WALLET_FILE="keys/${NETWORK}-deployer.json"
-LOG_ROOT="${AGON_DEPLOY_LOG_ROOT:-$REPO_ROOT/logs/deploys}"
+LOG_ROOT="${RYVO_DEPLOY_LOG_ROOT:-$REPO_ROOT/logs/deploys}"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="$LOG_ROOT/${NETWORK}-${TIMESTAMP}"
 RUN_LOG="$RUN_DIR/deploy.log"
@@ -108,7 +108,7 @@ sync_anchor_program_ids() {
   for cluster in devnet localnet mainnet; do
     sed -i "/^\[programs\.$cluster\]$/{
       n
-      s/^agon_protocol = \".*\"$/agon_protocol = \"$program_id\"/
+      s/^ryvo_protocol = \".*\"$/ryvo_protocol = \"$program_id\"/
     }" "$anchor_toml"
   done
 }

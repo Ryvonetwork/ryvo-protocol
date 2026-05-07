@@ -1,6 +1,6 @@
 /**
- * Thin mirror of the SDK's USDC<->shares helpers for use inside the agon-protocol repo's own
- * ts-mocha tests and devnet demo scripts. The SDK at `@agonx402/sdk` is the canonical source —
+ * Thin mirror of the SDK's USDC<->shares helpers for use inside the ryvo-protocol repo's own
+ * ts-mocha tests and devnet demo scripts. The SDK at `@ryvonetwork/sdk` is the canonical source —
  * this file deliberately stays in sync with `packages/sdk/src/yield.ts` and only re-implements
  * the math without importing the SDK package (so the protocol repo can run its tests / demos
  * without a workspace dep on the SDK).

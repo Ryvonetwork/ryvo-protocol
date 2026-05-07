@@ -1,4 +1,4 @@
-# Idea Context: Agon Agent Payments
+# Idea Context: Ryvo Agent Payments
 
 Updated: 2026-04-29
 
@@ -56,6 +56,6 @@ Updated: 2026-04-29
   ],
   "crowdedness": "crowded",
   "moat_type": "technical complexity plus distribution/ecosystem lock-in",
-  "differentiation": "Do not compete as a new x402 or generic nanopayment provider. Position Agon as Solana-native clearing, multilateral netting, and escrow/accounting infrastructure for x402/MPP-compatible gateways."
+  "differentiation": "Do not compete as a new x402 or generic nanopayment provider. Position Ryvo as Solana-native clearing, multilateral netting, and escrow/accounting infrastructure for x402/MPP-compatible gateways."
 }
 ```

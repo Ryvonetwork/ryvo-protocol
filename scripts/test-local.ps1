@@ -4,9 +4,9 @@ param(
     [switch]$SkipPrepare
 )
 
-$RepoLinux = "/home/heis/agon/agon-protocol"
-$RepoUnc = "\\wsl.localhost\Ubuntu\home\heis\agon\agon-protocol"
-$WalletWindows = "\\wsl.localhost\Ubuntu\home\heis\agon\agon-protocol\keys\devnet-deployer.json"
+$RepoLinux = "/home/heis/ryvo/ryvo-protocol"
+$RepoUnc = "\\wsl.localhost\Ubuntu\home\heis\ryvo\ryvo-protocol"
+$WalletWindows = "\\wsl.localhost\Ubuntu\home\heis\ryvo\ryvo-protocol\keys\devnet-deployer.json"
 $NodeExe = "C:\Program Files\nodejs\node.exe"
 $PrepareScript = "./scripts/prepare-local-test-suite.sh"
 $MochaScript = ".\node_modules\mocha\bin\mocha"

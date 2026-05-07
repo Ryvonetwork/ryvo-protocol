@@ -1,0 +1,38 @@
+[package]
+name = "ryvo-protocol"
+version = "0.1.0"
+description = "Created with Anchor"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "ryvo_protocol"
+
+[features]
+default = ["custom-heap"]
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+anchor-debug = []
+custom-heap = ["dep:solana-allocator"]
+custom-panic = []
+mainnet = []
+devnet = []
+
+
+[dependencies]
+anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+anchor-spl = "0.32.1"
+bytemuck = { version = "1.14", features = ["derive"] }
+hex-literal = "0.4"
+sha2 = "0.10"
+solana-allocator = { version = "0.1.2", optional = true }
+mock-yield = { path = "../mock-yield", features = ["cpi"] }
+
+[dev-dependencies]
+proptest = "1.6"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

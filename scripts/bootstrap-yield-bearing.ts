@@ -3,11 +3,11 @@
  * Standalone bootstrap for the v6 yield-bearing setup.
  *
  * Idempotent — safe to re-run. Performs:
- *   1. Ensures Agon GlobalConfig + TokenRegistry exist (initialise-program does this too).
+ *   1. Ensures Ryvo GlobalConfig + TokenRegistry exist (initialise-program does this too).
  *   2. Resolves the underlying USDC mint (--usdc-mint <PUBKEY>, env USDC_MINT, or a cached
  *      deployer-controlled mint at keys/<network>-demo-usdc-mint.json).
  *   3. Initialises the mock-yield Reserve at --apy-bps (default 600 = 6%).
- *   4. Registers agUSDC as token_id=1 (kind=YieldBearing) in the Agon registry.
+ *   4. Registers ryUSDC as token_id=1 (kind=YieldBearing) in the Ryvo registry.
  *
  * Usage examples:
  *   yarn ts-node scripts/bootstrap-yield-bearing.ts --network devnet

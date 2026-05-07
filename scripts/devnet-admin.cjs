@@ -86,7 +86,7 @@ function loadProvider() {
 }
 
 function loadProgram(provider) {
-  const idlPath = path.join(__dirname, "..", "target", "idl", "agon_protocol.json");
+  const idlPath = path.join(__dirname, "..", "target", "idl", "ryvo_protocol.json");
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf8"));
   return new Program(idl, provider);
 }
@@ -483,7 +483,7 @@ async function main() {
   }
 
   throw new Error(
-    "Usage: node scripts/devnet-admin.cjs <ensure-token|ensure-participant|set-inbound-policy|refresh-config> [--id 2 --mint <mint> --symbol AGON | --policy 0]"
+    "Usage: node scripts/devnet-admin.cjs <ensure-token|ensure-participant|set-inbound-policy|refresh-config> [--id 2 --mint <mint> --symbol RYVO | --policy 0]"
   );
 }
 

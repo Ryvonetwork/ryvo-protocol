@@ -390,12 +390,12 @@ async function findMaxChannelsForParticipants(params: {
 }
 
 describe("BLS local capacity search", () => {
-  const runCapacity = process.env.AGON_RUN_BLS_CAPACITY === "1" ? it : it.skip;
+  const runCapacity = process.env.RYVO_RUN_BLS_CAPACITY === "1" ? it : it.skip;
 
   runCapacity("measures simulated BLS v0 + ALT capacity", async function () {
     this.timeout(240_000);
 
-    const maxParticipants = Number(process.env.AGON_BLS_CAPACITY_MAX_P ?? 10);
+    const maxParticipants = Number(process.env.RYVO_BLS_CAPACITY_MAX_P ?? 10);
     const participants = await createCapacityParticipants(maxParticipants);
     const allEdges = await createCapacityEdges(
       participants,

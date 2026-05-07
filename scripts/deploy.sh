@@ -98,9 +98,9 @@ deploy_program_with_solana_cli() {
   local wallet_file="$3"
   local program_so="$4"
   local program_keypair="$5"
-  local max_sign_attempts="${AGON_DEPLOY_MAX_SIGN_ATTEMPTS:-20}"
-  local compute_unit_price="${AGON_DEPLOY_COMPUTE_UNIT_PRICE:-}"
-  local skip_preflight="${AGON_DEPLOY_SKIP_PREFLIGHT:-0}"
+  local max_sign_attempts="${RYVO_DEPLOY_MAX_SIGN_ATTEMPTS:-20}"
+  local compute_unit_price="${RYVO_DEPLOY_COMPUTE_UNIT_PRICE:-}"
+  local skip_preflight="${RYVO_DEPLOY_SKIP_PREFLIGHT:-0}"
 
   local deploy_args=(
     program deploy "$program_so"
@@ -216,25 +216,25 @@ if [[ -z "$NODE_BIN" ]]; then
   exit 1
 fi
 
-echo "🚀 Starting Agon Protocol deployment to $NETWORK..."
+echo "🚀 Starting Ryvo Network deployment to $NETWORK..."
 RPC_URL="$(resolve_project_rpc_url "$NETWORK")"
 
 if [[ "$FRESH_PROGRAM_ID" == "true" ]]; then
-  echo "🆕 Generating a fresh agon_protocol program id to avoid stale onchain state..."
+  echo "🆕 Generating a fresh ryvo_protocol program id to avoid stale onchain state..."
   mkdir -p target/deploy
-  solana-keygen new --no-bip39-passphrase -o target/deploy/agon_protocol-keypair.json -f >/dev/null
-  # Mock-yield is brand-new in v6; rotate its id alongside agon_protocol when --fresh-program-id is set.
+  solana-keygen new --no-bip39-passphrase -o target/deploy/ryvo_protocol-keypair.json -f >/dev/null
+  # Mock-yield is brand-new in v6; rotate its id alongside ryvo_protocol when --fresh-program-id is set.
   echo "🆕 Generating a fresh mock_yield program id..."
   solana-keygen new --no-bip39-passphrase -o target/deploy/mock_yield-keypair.json -f >/dev/null
   anchor keys sync >/dev/null
-  FRESH_PROGRAM_ID_VALUE="$(solana address -k target/deploy/agon_protocol-keypair.json)"
+  FRESH_PROGRAM_ID_VALUE="$(solana address -k target/deploy/ryvo_protocol-keypair.json)"
   FRESH_MOCK_YIELD_ID_VALUE="$(solana address -k target/deploy/mock_yield-keypair.json)"
-  sync_anchor_program_ids "agon_protocol" "$FRESH_PROGRAM_ID_VALUE"
+  sync_anchor_program_ids "ryvo_protocol" "$FRESH_PROGRAM_ID_VALUE"
   sync_anchor_program_ids "mock_yield" "$FRESH_MOCK_YIELD_ID_VALUE"
   if [[ -f "programs/mock-yield/src/lib.rs" ]]; then
     sed -i "s|^declare_id!(\"[^\"]*\");|declare_id!(\"$FRESH_MOCK_YIELD_ID_VALUE\");|" programs/mock-yield/src/lib.rs
   fi
-  echo "📋 Fresh agon_protocol id: $FRESH_PROGRAM_ID_VALUE"
+  echo "📋 Fresh ryvo_protocol id: $FRESH_PROGRAM_ID_VALUE"
   echo "📋 Fresh mock_yield   id: $FRESH_MOCK_YIELD_ID_VALUE"
 else
   ensure_mock_yield_keypair
@@ -268,13 +268,13 @@ anchor build -- --features custom-heap
 
 # Step 2: Deploy to specified network
 echo "📦 Deploying to $NETWORK..."
-PROGRAM_SO="target/deploy/agon_protocol.so"
-PROGRAM_KEYPAIR="target/deploy/agon_protocol-keypair.json"
+PROGRAM_SO="target/deploy/ryvo_protocol.so"
+PROGRAM_KEYPAIR="target/deploy/ryvo_protocol-keypair.json"
 MOCK_YIELD_SO="target/deploy/mock_yield.so"
 MOCK_YIELD_KEYPAIR="target/deploy/mock_yield-keypair.json"
 AGAVE_SOLANA_BIN="$(find_agave_beta_solana_bin || true)"
 
-USE_DIRECT_SOLANA_DEPLOY="${AGON_DEPLOY_WITH_SOLANA_CLI:-0}"
+USE_DIRECT_SOLANA_DEPLOY="${RYVO_DEPLOY_WITH_SOLANA_CLI:-0}"
 if [[ "$USE_DIRECT_SOLANA_DEPLOY" != "1" && "$NETWORK" == "devnet" && -n "$AGAVE_SOLANA_BIN" ]]; then
   if program_uses_bls_syscalls "$PROGRAM_SO"; then
     USE_DIRECT_SOLANA_DEPLOY="1"
@@ -284,10 +284,10 @@ fi
 
 if [[ "$USE_DIRECT_SOLANA_DEPLOY" == "1" ]]; then
   if [[ -z "$AGAVE_SOLANA_BIN" ]]; then
-    echo "❌ AGON_DEPLOY_WITH_SOLANA_CLI=1 but Agave beta solana binary was not found."
+    echo "❌ RYVO_DEPLOY_WITH_SOLANA_CLI=1 but Agave beta solana binary was not found."
     exit 1
   fi
-  echo "📦 Deploying agon_protocol..."
+  echo "📦 Deploying ryvo_protocol..."
   deploy_program_with_solana_cli "$AGAVE_SOLANA_BIN" "$RPC_URL" "$WALLET_FILE" "$PROGRAM_SO" "$PROGRAM_KEYPAIR"
   if [[ -f "$MOCK_YIELD_SO" ]]; then
     echo "📦 Deploying mock_yield..."
@@ -302,17 +302,17 @@ fi
 # Step 3: Initialize the program and capture config
 echo "⚙️  Initializing program..."
 INIT_ARGS=()
-if [[ -n "${AGON_ALLOWLIST_TOKENS:-}" ]]; then
-  echo "🪙 Passing AGON_ALLOWLIST_TOKENS to initializer"
-  INIT_ARGS+=(--allowlisted-tokens-json "$AGON_ALLOWLIST_TOKENS")
+if [[ -n "${RYVO_ALLOWLIST_TOKENS:-}" ]]; then
+  echo "🪙 Passing RYVO_ALLOWLIST_TOKENS to initializer"
+  INIT_ARGS+=(--allowlisted-tokens-json "$RYVO_ALLOWLIST_TOKENS")
 fi
-if [[ -n "${AGON_FEE_RECIPIENT:-}" ]]; then
-  echo "💼 Passing AGON_FEE_RECIPIENT to initializer"
-  INIT_ARGS+=(--fee-recipient "$AGON_FEE_RECIPIENT")
+if [[ -n "${RYVO_FEE_RECIPIENT:-}" ]]; then
+  echo "💼 Passing RYVO_FEE_RECIPIENT to initializer"
+  INIT_ARGS+=(--fee-recipient "$RYVO_FEE_RECIPIENT")
 fi
-if [[ -n "${AGON_INITIAL_AUTHORITY:-}" ]]; then
-  echo "🛡️ Passing AGON_INITIAL_AUTHORITY to initializer"
-  INIT_ARGS+=(--initial-authority "$AGON_INITIAL_AUTHORITY")
+if [[ -n "${RYVO_INITIAL_AUTHORITY:-}" ]]; then
+  echo "🛡️ Passing RYVO_INITIAL_AUTHORITY to initializer"
+  INIT_ARGS+=(--initial-authority "$RYVO_INITIAL_AUTHORITY")
 fi
 if [[ "$NETWORK" == "devnet" ]]; then
   CONFIG_OUTPUT=$(env ANCHOR_PROVIDER_URL="$RPC_URL" ANCHOR_WALLET="$WALLET_FILE" "$NODE_BIN" node_modules/ts-node/dist/bin.js scripts/initialize-program.ts "${INIT_ARGS[@]}" 2>&1)
@@ -325,15 +325,15 @@ echo "$CONFIG_OUTPUT"
 # Extract JSON config from output (find the JSON object)
 CONFIG_JSON=$(echo "$CONFIG_OUTPUT" | sed -n '/^{/,/^}/p')
 
-if [[ -n "${AGON_ALLOWLIST_TOKENS:-}" ]]; then
+if [[ -n "${RYVO_ALLOWLIST_TOKENS:-}" ]]; then
   if [[ -z "$CONFIG_JSON" || "$CONFIG_JSON" == "{}" ]]; then
     echo "❌ Initializer did not emit deployment JSON, so the requested token allowlist could not be verified."
     exit 1
   fi
 
-  if ! CONFIG_JSON="$CONFIG_JSON" AGON_ALLOWLIST_TOKENS="$AGON_ALLOWLIST_TOKENS" "$NODE_BIN" - <<'NODE'
+  if ! CONFIG_JSON="$CONFIG_JSON" RYVO_ALLOWLIST_TOKENS="$RYVO_ALLOWLIST_TOKENS" "$NODE_BIN" - <<'NODE'
 const config = JSON.parse(process.env.CONFIG_JSON ?? "{}");
-const requested = JSON.parse(process.env.AGON_ALLOWLIST_TOKENS ?? "[]");
+const requested = JSON.parse(process.env.RYVO_ALLOWLIST_TOKENS ?? "[]");
 const actualIds = new Set((config.tokens ?? []).map((token) => token.id));
 const missing = requested.filter((token) => !actualIds.has(token.id));
 
@@ -361,16 +361,16 @@ if [[ -n "$CONFIG_JSON" && "$CONFIG_JSON" != "{}" ]]; then
   echo "💾 Deployment config saved to: $CONFIG_FILE"
 fi
 
-# Step 4: Bootstrap v6 yield-bearing setup (mock-yield Reserve + agUSDC TokenEntry).
+# Step 4: Bootstrap v6 yield-bearing setup (mock-yield Reserve + ryUSDC TokenEntry).
 # Idempotent — safe to run on every deploy.
-if [[ "${AGON_SKIP_YIELD_BOOTSTRAP:-0}" != "1" ]]; then
-  echo "🌱 Bootstrapping yield-bearing setup (mock-yield Reserve + agUSDC TokenEntry)..."
+if [[ "${RYVO_SKIP_YIELD_BOOTSTRAP:-0}" != "1" ]]; then
+  echo "🌱 Bootstrapping yield-bearing setup (mock-yield Reserve + ryUSDC TokenEntry)..."
   BOOTSTRAP_ARGS=(--bootstrap-only --network "$NETWORK")
-  if [[ -n "${AGON_USDC_MINT:-}" ]]; then
-    BOOTSTRAP_ARGS+=(--usdc-mint "$AGON_USDC_MINT")
+  if [[ -n "${RYVO_USDC_MINT:-}" ]]; then
+    BOOTSTRAP_ARGS+=(--usdc-mint "$RYVO_USDC_MINT")
   fi
-  if [[ -n "${AGON_FEE_RECIPIENT:-}" ]]; then
-    BOOTSTRAP_ARGS+=(--fee-recipient "$AGON_FEE_RECIPIENT")
+  if [[ -n "${RYVO_FEE_RECIPIENT:-}" ]]; then
+    BOOTSTRAP_ARGS+=(--fee-recipient "$RYVO_FEE_RECIPIENT")
   fi
   env ANCHOR_PROVIDER_URL="$RPC_URL" ANCHOR_WALLET="$WALLET_FILE" \
     "$NODE_BIN" node_modules/ts-node/dist/bin.js scripts/yield-bearing-demo.ts "${BOOTSTRAP_ARGS[@]}" || {
@@ -381,12 +381,12 @@ if [[ "${AGON_SKIP_YIELD_BOOTSTRAP:-0}" != "1" ]]; then
     }
   echo "✅ Yield-bearing setup ready."
 else
-  echo "⏭️  Skipping yield-bearing bootstrap (AGON_SKIP_YIELD_BOOTSTRAP=1)."
+  echo "⏭️  Skipping yield-bearing bootstrap (RYVO_SKIP_YIELD_BOOTSTRAP=1)."
 fi
 
 echo "🎉 Deployment, initialization, and yield-bearing bootstrap complete!"
 echo "🌐 Network: $NETWORK"
-echo "📋 agon_protocol id: $(solana address -k target/deploy/agon_protocol-keypair.json)"
+echo "📋 ryvo_protocol id: $(solana address -k target/deploy/ryvo_protocol-keypair.json)"
 if [[ -f "target/deploy/mock_yield-keypair.json" ]]; then
   echo "📋 mock_yield   id: $(solana address -k target/deploy/mock_yield-keypair.json)"
 fi

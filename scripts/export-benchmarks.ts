@@ -83,15 +83,15 @@ function parseArgs(argv: string[]): CliOptions {
     docsOnly: args.has("docs-only"),
     manifestPath:
       args.get("manifest") ??
-      path.join(repoRoot, "config", "agon-protocol-demo-last-run.json"),
+      path.join(repoRoot, "config", "ryvo-protocol-demo-last-run.json"),
     deploymentPath:
       args.get("deployment") ??
       path.join(repoRoot, "config", "devnet-deployment.json"),
     outputDir: args.get("output-dir") ?? path.join(repoRoot, "benchmarks"),
     docsRoot:
       args.get("docs-root") ??
-      process.env.AGON_DOCS_ROOT ??
-      "/mnt/c/agon/agon/docs",
+      process.env.RYVO_DOCS_ROOT ??
+      "/mnt/c/ryvo/ryvo/docs",
   };
 }
 
@@ -137,7 +137,7 @@ function createLiveSnapshot(
       `Demo manifest ${path.join(
         repoRoot,
         "config",
-        "agon-protocol-demo-last-run.json"
+        "ryvo-protocol-demo-last-run.json"
       )} does not include benchmarkScenarios yet. Re-run the upgraded demo first.`
     );
   }
@@ -269,7 +269,7 @@ function renderLiveBenchmarkPage(snapshot: LiveBenchmarkSnapshot): string {
 
   return `---
 title: "Generated Live Devnet Benchmarks"
-description: "Generated from the latest protocol-only Agon devnet demo run."
+description: "Generated from the latest protocol-only Ryvo devnet demo run."
 ---
 
 The table below is generated from the latest committed live demo snapshot for program \`${
@@ -302,7 +302,7 @@ function renderSyntheticBenchmarkPage(
 ): string {
   return `---
 title: "Generated Synthetic Capacity Benchmarks"
-description: "Deterministic capacity snapshots for Agon bucketed BLS settlement paths."
+description: "Deterministic capacity snapshots for Ryvo bucketed BLS settlement paths."
 ---
 
 These tables are generated from the deterministic sizing scripts at commit \`${

@@ -4,18 +4,18 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import { createMint, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { expect } from "chai";
 import { createHash } from "crypto";
-import { AgonProtocol } from "../target/types/agon_protocol";
+import { RyvoProtocol } from "../target/types/ryvo_protocol";
 
 anchor.setProvider(anchor.AnchorProvider.env());
 const provider = anchor.AnchorProvider.env();
-const program = anchor.workspace.agonProtocol as Program<AgonProtocol>;
+const program = anchor.workspace.ryvoProtocol as Program<RyvoProtocol>;
 
 const BPF_LOADER_UPGRADEABLE_PROGRAM_ID = new PublicKey(
   "BPFLoaderUpgradeab1e11111111111111111111111"
 );
 const TEST_CHAIN_ID = 3;
 const TEST_TOKEN_ID = 1;
-const MESSAGE_DOMAIN_TAG = Buffer.from("agon-message-domain-v1", "utf8");
+const MESSAGE_DOMAIN_TAG = Buffer.from("ryvo-message-domain-v1", "utf8");
 
 function findGlobalConfigPda(): PublicKey {
   return PublicKey.findProgramAddressSync(

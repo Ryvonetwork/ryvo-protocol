@@ -13,7 +13,7 @@
     "deploy:devnet": "./scripts/deploy.sh --network=devnet",
     "deploy:mainnet": "./scripts/deploy.sh --network=mainnet",
     "setup:wallet": "./scripts/setup-wallet.sh",
-    "demo:agon-protocol": "./scripts/agon-protocol-demo.sh",
+    "demo:ryvo-protocol": "./scripts/ryvo-protocol-demo.sh",
     "benchmarks:generate": "ts-node scripts/export-benchmarks.ts",
     "benchmarks:docs": "ts-node scripts/export-benchmarks.ts --docs-only"
   },

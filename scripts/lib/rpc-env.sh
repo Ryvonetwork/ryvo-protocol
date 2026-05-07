@@ -1,6 +1,6 @@
 load_project_rpc_env() {
   local repo_root="$1"
-  local rpc_env_file="${AGON_RPC_ENV_FILE:-$repo_root/config/rpc.env}"
+  local rpc_env_file="${RYVO_RPC_ENV_FILE:-$repo_root/config/rpc.env}"
 
   if [[ -f "$rpc_env_file" ]]; then
     set -a
@@ -13,8 +13,8 @@ load_project_rpc_env() {
 resolve_project_rpc_url() {
   local network="$1"
 
-  if [[ -n "${AGON_RPC_URL:-}" ]]; then
-    printf '%s\n' "$AGON_RPC_URL"
+  if [[ -n "${RYVO_RPC_URL:-}" ]]; then
+    printf '%s\n' "$RYVO_RPC_URL"
     return
   fi
 
@@ -23,13 +23,13 @@ resolve_project_rpc_url() {
     return
   fi
 
-  if [[ "$network" == "mainnet" && -n "${AGON_MAINNET_RPC_URL:-}" ]]; then
-    printf '%s\n' "$AGON_MAINNET_RPC_URL"
+  if [[ "$network" == "mainnet" && -n "${RYVO_MAINNET_RPC_URL:-}" ]]; then
+    printf '%s\n' "$RYVO_MAINNET_RPC_URL"
     return
   fi
 
-  if [[ "$network" == "devnet" && -n "${AGON_DEVNET_RPC_URL:-}" ]]; then
-    printf '%s\n' "$AGON_DEVNET_RPC_URL"
+  if [[ "$network" == "devnet" && -n "${RYVO_DEVNET_RPC_URL:-}" ]]; then
+    printf '%s\n' "$RYVO_DEVNET_RPC_URL"
     return
   fi
 

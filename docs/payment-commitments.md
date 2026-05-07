@@ -1,11 +1,11 @@
-# Agon Payment Commitments
+# Ryvo Payment Commitments
 
 Status: Current  
 Date: 2026-04-08
 
 ## Summary
 
-Agon uses cumulative payment commitments as the unilateral hot path.
+Ryvo uses cumulative payment commitments as the unilateral hot path.
 
 A commitment is:
 
@@ -14,7 +14,7 @@ A commitment is:
 - cumulative rather than per-payment
 - settled by redeeming only the delta above the lane's previously settled amount
 
-Agon's protocol surface is:
+Ryvo's protocol surface is:
 
 - **direct edge primitive**: unilateral cumulative commitments
 - **operational batching primitive**: bundle settlement across many unilateral lanes
@@ -22,7 +22,7 @@ Agon's protocol surface is:
 
 ## Lane Semantics
 
-For any relationship between two agents, Agon keeps two unilateral lanes per token:
+For any relationship between two agents, Ryvo keeps two unilateral lanes per token:
 
 - `A -> B`
 - `B -> A`
@@ -44,13 +44,13 @@ Each lane stores:
 - optional pending signer-rotation state
 
 Across deployments, replay protection comes from the immutable `message_domain`
-that Agon derives in-program from the deployed `program_id` and configured
+that Ryvo derives in-program from the deployed `program_id` and configured
 `chain_id` during bootstrap. `mainnet`, `devnet`, `testnet`, and `localnet`
 use distinct chain ids.
 
 ## Direct Settlement
 
-The signed unilateral message format is `agon-cmt-v5`.
+The signed unilateral message format is `ryvo-cmt-v5`.
 
 See `docs/client-message-schemas.md` for the exact byte layout.
 
@@ -62,7 +62,7 @@ When a payee settles a commitment, the program:
 4. verifies `committed_amount > settled_cumulative`
 5. computes `delta = committed_amount - settled_cumulative`
 6. debits the payer by the delta
-7. credits the payee internally inside the Agon vault
+7. credits the payee internally inside the Ryvo vault
 8. updates `settled_cumulative`
 
 The payee does not need intermediate checkpoints. The latest valid cumulative commitment is enough.
@@ -92,7 +92,7 @@ Important:
 
 ## Clearing Rounds
 
-Clearing rounds are where Agon goes beyond plain unilateral settlement.
+Clearing rounds are where Ryvo goes beyond plain unilateral settlement.
 
 A clearing round:
 
@@ -106,7 +106,7 @@ So the same cumulative edge model can be used in two ways:
 - **directly** through unilateral or bundle settlement
 - **cooperatively** through facilitator- or participant-proposed clearing rounds
 
-The signed round format is `agon-round-v4`.
+The signed round format is `ryvo-round-v4`.
 
 It uses:
 
@@ -123,7 +123,7 @@ Suppose a clearing round includes these lane deltas:
 - `B -> C = 10`
 - `C -> A = 10`
 
-Agon advances all included unilateral lanes to their latest cumulative targets, then applies only the residual participant balance changes:
+Ryvo advances all included unilateral lanes to their latest cumulative targets, then applies only the residual participant balance changes:
 
 - `A = -40`
 - `B = +40`
@@ -136,7 +136,7 @@ That is the key distinction:
 
 ## Locked And Trust-Based Flows
 
-Agon supports both risk modes on the same lane model:
+Ryvo supports both risk modes on the same lane model:
 
 - **locked mode**: the payer locks lane-specific collateral with `lock_channel_funds`
 - **trust-based mode**: the payee accepts unsecured commitments based on external trust policy

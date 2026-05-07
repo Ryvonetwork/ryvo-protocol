@@ -48,7 +48,7 @@
         "reductionPercent": 90,
         "compressionRatio": 10,
         "estimatedBaselineCostUsd": 0.0044,
-        "estimatedAgonCostUsd": 0.00044,
+        "estimatedRyvoCostUsd": 0.00044,
         "estimatedSavingsUsd": 0.00396
       },
       "notes": [
@@ -91,7 +91,7 @@
         "reductionPercent": 77.77777777777779,
         "compressionRatio": 4.5,
         "estimatedBaselineCostUsd": 0.00396,
-        "estimatedAgonCostUsd": 0.00088,
+        "estimatedRyvoCostUsd": 0.00088,
         "estimatedSavingsUsd": 0.00308
       },
       "notes": [
@@ -134,7 +134,7 @@
         "reductionPercent": 99.999998,
         "compressionRatio": 50000000,
         "estimatedBaselineCostUsd": 44000,
-        "estimatedAgonCostUsd": 0.00088,
+        "estimatedRyvoCostUsd": 0.00088,
         "estimatedSavingsUsd": 43999.99912
       },
       "notes": [
@@ -174,7 +174,7 @@
         "reductionPercent": 99.99999899999999,
         "compressionRatio": 100000000,
         "estimatedBaselineCostUsd": 44000,
-        "estimatedAgonCostUsd": 0.00044,
+        "estimatedRyvoCostUsd": 0.00044,
         "estimatedSavingsUsd": 43999.99956
       },
       "notes": [
@@ -214,7 +214,7 @@
         "reductionPercent": 99.99999994,
         "compressionRatio": 1666666665,
         "estimatedBaselineCostUsd": 733333.3326000001,
-        "estimatedAgonCostUsd": 0.00044,
+        "estimatedRyvoCostUsd": 0.00044,
         "estimatedSavingsUsd": 733333.3321600001
       },
       "notes": [

@@ -8,7 +8,7 @@ export type BenchmarkSavings = {
   reductionPercent: number;
   compressionRatio: number;
   estimatedBaselineCostUsd: number;
-  estimatedAgonCostUsd: number;
+  estimatedRyvoCostUsd: number;
   estimatedSavingsUsd: number;
 };
 
@@ -140,7 +140,7 @@ export function computeSavingsMetrics(params: {
       : baselineTransactionCount / settlementTransactionCount;
   const estimatedBaselineCostUsd =
     baselineTransactionCount * perTransactionCostUsd;
-  const estimatedAgonCostUsd =
+  const estimatedRyvoCostUsd =
     settlementTransactionCount * perTransactionCostUsd;
 
   return {
@@ -151,8 +151,8 @@ export function computeSavingsMetrics(params: {
     reductionPercent,
     compressionRatio,
     estimatedBaselineCostUsd,
-    estimatedAgonCostUsd,
-    estimatedSavingsUsd: estimatedBaselineCostUsd - estimatedAgonCostUsd,
+    estimatedRyvoCostUsd,
+    estimatedSavingsUsd: estimatedBaselineCostUsd - estimatedRyvoCostUsd,
   };
 }
 

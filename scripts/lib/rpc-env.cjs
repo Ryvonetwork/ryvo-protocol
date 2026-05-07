@@ -20,7 +20,7 @@ function parseEnvLine(line) {
 
 function loadProjectRpcEnv(repoRoot = process.cwd()) {
   const rpcEnvFile =
-    process.env.AGON_RPC_ENV_FILE ?? path.join(repoRoot, "config", "rpc.env");
+    process.env.RYVO_RPC_ENV_FILE ?? path.join(repoRoot, "config", "rpc.env");
   if (!fs.existsSync(rpcEnvFile)) return;
 
   const contents = fs.readFileSync(rpcEnvFile, "utf8");
@@ -32,13 +32,13 @@ function loadProjectRpcEnv(repoRoot = process.cwd()) {
 }
 
 function resolveProjectRpcUrl(network = "devnet") {
-  if (process.env.AGON_RPC_URL) return process.env.AGON_RPC_URL;
+  if (process.env.RYVO_RPC_URL) return process.env.RYVO_RPC_URL;
   if (process.env.ANCHOR_PROVIDER_URL) return process.env.ANCHOR_PROVIDER_URL;
-  if (network === "mainnet" && process.env.AGON_MAINNET_RPC_URL) {
-    return process.env.AGON_MAINNET_RPC_URL;
+  if (network === "mainnet" && process.env.RYVO_MAINNET_RPC_URL) {
+    return process.env.RYVO_MAINNET_RPC_URL;
   }
-  if (network === "devnet" && process.env.AGON_DEVNET_RPC_URL) {
-    return process.env.AGON_DEVNET_RPC_URL;
+  if (network === "devnet" && process.env.RYVO_DEVNET_RPC_URL) {
+    return process.env.RYVO_DEVNET_RPC_URL;
   }
   return network === "mainnet"
     ? "https://api.mainnet-beta.solana.com"

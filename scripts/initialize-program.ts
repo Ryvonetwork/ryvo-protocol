@@ -7,7 +7,7 @@ import { getOrCreateAssociatedTokenAccount } from "@solana/spl-token";
 import { createHash } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
-import { AgonProtocol } from "../target/types/agon_protocol";
+import { RyvoProtocol } from "../target/types/ryvo_protocol";
 
 const { loadProjectRpcEnv, resolveProjectRpcUrl } = require("./lib/rpc-env.cjs") as {
   loadProjectRpcEnv: (repoRoot?: string) => void;
@@ -22,7 +22,7 @@ const VAULT_TOKEN_ACCOUNT_SEED = "vault-token-account";
 const BPF_LOADER_UPGRADEABLE_PROGRAM_ID = new PublicKey(
   "BPFLoaderUpgradeab1e11111111111111111111111"
 );
-const MESSAGE_DOMAIN_TAG = Buffer.from("agon-message-domain-v1", "utf8");
+const MESSAGE_DOMAIN_TAG = Buffer.from("ryvo-message-domain-v1", "utf8");
 
 type SupportedNetwork = "devnet" | "mainnet" | "testnet" | "localnet";
 
@@ -101,18 +101,18 @@ function parseCliArgs(argv: string[]): CliOptions {
   return options;
 }
 
-function loadProgram(provider: anchor.AnchorProvider): Program<AgonProtocol> {
+function loadProgram(provider: anchor.AnchorProvider): Program<RyvoProtocol> {
   const idlPath = path.join(
     __dirname,
     "..",
     "target",
     "idl",
-    "agon_protocol.json"
+    "ryvo_protocol.json"
   );
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf8"));
   const resolvedProgramId = resolveProgramId(provider, idl);
   return new Program(
-    { ...idl, address: resolvedProgramId.toString() } as AgonProtocol,
+    { ...idl, address: resolvedProgramId.toString() } as RyvoProtocol,
     provider
   );
 }
@@ -121,7 +121,7 @@ function resolveProgramId(
   provider: anchor.AnchorProvider,
   idl: { address?: string }
 ): PublicKey {
-  const fromEnv = process.env.AGON_PROGRAM_ID?.trim();
+  const fromEnv = process.env.RYVO_PROGRAM_ID?.trim();
   if (fromEnv) {
     return new PublicKey(fromEnv);
   }
@@ -138,7 +138,7 @@ function resolveProgramId(
         continue;
       }
       if (!inSection) continue;
-      const match = trimmed.match(/^agon_protocol\s*=\s*"([^"]+)"$/);
+      const match = trimmed.match(/^ryvo_protocol\s*=\s*"([^"]+)"$/);
       if (match) {
         return new PublicKey(match[1]);
       }
@@ -150,7 +150,7 @@ function resolveProgramId(
   }
 
   throw new Error(
-    "Unable to resolve program id. Set AGON_PROGRAM_ID or update Anchor.toml."
+    "Unable to resolve program id. Set RYVO_PROGRAM_ID or update Anchor.toml."
   );
 }
 
@@ -239,11 +239,11 @@ function parseAllowlistedTokens(
   cliOptions: CliOptions
 ): AllowlistedTokenInput[] {
   const raw =
-    cliOptions.allowlistedTokensJson ?? process.env.AGON_ALLOWLIST_TOKENS;
+    cliOptions.allowlistedTokensJson ?? process.env.RYVO_ALLOWLIST_TOKENS;
   const tokens = raw ? JSON.parse(raw) : [];
 
   if (!Array.isArray(tokens)) {
-    throw new Error("AGON_ALLOWLIST_TOKENS must be a JSON array");
+    throw new Error("RYVO_ALLOWLIST_TOKENS must be a JSON array");
   }
 
   return tokens.map((token, index) => {
@@ -304,7 +304,7 @@ async function ensureFeeRecipientTokenAccount(
 }
 
 async function ensureTokenRegistry(
-  program: Program<AgonProtocol>,
+  program: Program<RyvoProtocol>,
   globalConfig: PublicKey,
   authority: PublicKey
 ): Promise<void> {
@@ -331,7 +331,7 @@ async function ensureTokenRegistry(
 }
 
 async function ensureAllowlistedTokens(
-  program: Program<AgonProtocol>,
+  program: Program<RyvoProtocol>,
   provider: anchor.AnchorProvider,
   feeRecipientWallet: PublicKey,
   requestedTokens: AllowlistedTokenInput[]
@@ -388,7 +388,7 @@ async function ensureAllowlistedTokens(
 }
 
 async function buildDeploymentTokens(
-  program: Program<AgonProtocol>,
+  program: Program<RyvoProtocol>,
   provider: anchor.AnchorProvider,
   feeRecipientWallet: PublicKey
 ): Promise<DeploymentToken[]> {
@@ -427,7 +427,7 @@ async function buildDeploymentTokens(
 }
 
 async function initializeProgram(): Promise<DeploymentConfig> {
-  console.log("🚀 Initializing Agon Protocol...");
+  console.log("🚀 Initializing Ryvo Network...");
 
   const cliOptions = parseCliArgs(process.argv.slice(2));
   const provider = loadProvider();
@@ -438,13 +438,13 @@ async function initializeProgram(): Promise<DeploymentConfig> {
   const requestedTokens = parseAllowlistedTokens(cliOptions);
   const desiredInitialAuthority = cliOptions.initialAuthority
     ? new PublicKey(cliOptions.initialAuthority)
-    : process.env.AGON_INITIAL_AUTHORITY
-    ? new PublicKey(process.env.AGON_INITIAL_AUTHORITY)
+    : process.env.RYVO_INITIAL_AUTHORITY
+    ? new PublicKey(process.env.RYVO_INITIAL_AUTHORITY)
     : provider.wallet.publicKey;
   const desiredFeeRecipient = cliOptions.feeRecipient
     ? new PublicKey(cliOptions.feeRecipient)
-    : process.env.AGON_FEE_RECIPIENT
-    ? new PublicKey(process.env.AGON_FEE_RECIPIENT)
+    : process.env.RYVO_FEE_RECIPIENT
+    ? new PublicKey(process.env.RYVO_FEE_RECIPIENT)
     : provider.wallet.publicKey;
 
   console.log("📡 Connected to:", provider.connection.rpcEndpoint);

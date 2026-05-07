@@ -6,10 +6,10 @@ SOLANA_BIN="${SOLANA_BIN:-$HOME/.local/share/solana/install/active_release/bin/s
 VALIDATOR_BIN="${VALIDATOR_BIN:-$HOME/.local/share/solana/install/active_release/bin/solana-test-validator}"
 RPC_URL="${ANCHOR_PROVIDER_URL:-http://127.0.0.1:8899}"
 WALLET="${ANCHOR_WALLET_LINUX:-$REPO_ROOT/keys/devnet-deployer.json}"
-PROGRAM_SO="${PROGRAM_SO:-$REPO_ROOT/target/deploy/agon_protocol.so}"
+PROGRAM_SO="${PROGRAM_SO:-$REPO_ROOT/target/deploy/ryvo_protocol.so}"
 MOCK_YIELD_SO="${MOCK_YIELD_SO:-$REPO_ROOT/target/deploy/mock_yield.so}"
-VALIDATOR_LOG="${VALIDATOR_LOG:-/tmp/agon-local-validator.log}"
-PROGRAM_ADDRESS="${PROGRAM_ADDRESS:-$(grep -m1 'declare_id!' "$REPO_ROOT/programs/agon-protocol/src/lib.rs" | sed -E 's/.*"([^"]+)".*/\1/')}"
+VALIDATOR_LOG="${VALIDATOR_LOG:-/tmp/ryvo-local-validator.log}"
+PROGRAM_ADDRESS="${PROGRAM_ADDRESS:-$(grep -m1 'declare_id!' "$REPO_ROOT/programs/ryvo-protocol/src/lib.rs" | sed -E 's/.*"([^"]+)".*/\1/')}"
 MOCK_YIELD_ADDRESS="${MOCK_YIELD_ADDRESS:-$(grep -m1 'declare_id!' "$REPO_ROOT/programs/mock-yield/src/lib.rs" | sed -E 's/.*"([^"]+)".*/\1/')}"
 
 if [[ ! -x "$SOLANA_BIN" ]]; then

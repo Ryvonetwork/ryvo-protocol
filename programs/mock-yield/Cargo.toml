@@ -1,7 +1,7 @@
 [package]
 name = "mock-yield"
 version = "0.1.0"
-description = "Mock Save/Kamino-style lending program for Agon devnet demos. Mints cUSDC SPL shares against USDC deposits with a configurable APY."
+description = "Mock Save/Kamino-style lending program for Ryvo devnet demos. Mints cUSDC SPL shares against USDC deposits with a configurable APY."
 edition = "2021"
 
 [lib]

@@ -6,7 +6,7 @@ const path = require("path");
 // route the package to its pure-JS build to avoid noisy fallback warnings.
 if (
   process.platform === "win32" ||
-  process.env.AGON_FORCE_BIGINT_BUFFER_BROWSER === "1"
+  process.env.RYVO_FORCE_BIGINT_BUFFER_BROWSER === "1"
 ) {
   const originalLoad = Module._load;
   const bigintBufferBrowserEntry = path.join(

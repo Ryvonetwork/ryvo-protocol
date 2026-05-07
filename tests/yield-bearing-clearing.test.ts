@@ -1,5 +1,5 @@
 /**
- * v6 — verifies that yield-bearing tokens (agUSDC) play correctly with the protocol's channel
+ * v6 — verifies that yield-bearing tokens (ryUSDC) play correctly with the protocol's channel
  * lifecycle and all three settlement modes:
  *
  *   1. Bilateral commitment settlement (`settle_individual` / `settle_commitment_bundle`)
@@ -23,7 +23,7 @@ import { TOKEN_PROGRAM_ID, getAccount } from "@solana/spl-token";
 import { expect } from "chai";
 
 import {
-  AG_USDC_TOKEN_ID,
+  RY_USDC_TOKEN_ID,
   accrueYieldForTest,
   aggregateBlsSignatures,
   assertYieldStrategySolvent,
@@ -73,7 +73,7 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
   });
 
   describe("Bilateral commitment settlement (settle_individual)", () => {
-    it("moves agUSDC shares between buckets without changing the yield index", async function () {
+    it("moves ryUSDC shares between buckets without changing the yield index", async function () {
       this.timeout(60_000);
 
       // Fresh participants so balances are isolated from other tests.
@@ -97,22 +97,22 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
       const ensured = await ensureChannel(
         alice.wallet,
         bob.wallet.publicKey,
-        AG_USDC_TOKEN_ID,
+        RY_USDC_TOKEN_ID,
         { payeeOwnerSigner: bob.wallet }
       );
       await lockChannelFundsForTest(
         ensured,
         4 * ONE_USDC,
         alice.wallet,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       );
 
       // Snapshot pre-settlement state.
       const strategyBefore = await fetchYieldStrategy();
       const aliceBefore = await fetchParticipantById(alice.participant.participantId);
       const bobBefore = await fetchParticipantById(bob.participant.participantId);
-      const aliceAvBefore = getTokenBalance(aliceBefore, AG_USDC_TOKEN_ID).availableBalance.toNumber();
-      const bobAvBefore = getTokenBalance(bobBefore, AG_USDC_TOKEN_ID).availableBalance.toNumber();
+      const aliceAvBefore = getTokenBalance(aliceBefore, RY_USDC_TOKEN_ID).availableBalance.toNumber();
+      const bobAvBefore = getTokenBalance(bobBefore, RY_USDC_TOKEN_ID).availableBalance.toNumber();
 
       // Alice signs a v5 commitment for cumulative_amount = 1.5 USDC of shares. Settled is the
       // delta vs the channel's current settledCumulative (which is 0).
@@ -120,7 +120,7 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
       const message = createCommitmentMessage({
         payerId: alice.participant.participantId,
         payeeId: bob.participant.participantId,
-        tokenId: AG_USDC_TOKEN_ID,
+        tokenId: RY_USDC_TOKEN_ID,
         committedAmount: targetCumulative,
       });
       await settleIndividualForTest({
@@ -134,8 +134,8 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
       const strategyAfter = await fetchYieldStrategy();
       const aliceAfter = await fetchParticipantById(alice.participant.participantId);
       const bobAfter = await fetchParticipantById(bob.participant.participantId);
-      const aliceAvAfter = getTokenBalance(aliceAfter, AG_USDC_TOKEN_ID).availableBalance.toNumber();
-      const bobAvAfter = getTokenBalance(bobAfter, AG_USDC_TOKEN_ID).availableBalance.toNumber();
+      const aliceAvAfter = getTokenBalance(aliceAfter, RY_USDC_TOKEN_ID).availableBalance.toNumber();
+      const bobAvAfter = getTokenBalance(bobAfter, RY_USDC_TOKEN_ID).availableBalance.toNumber();
       const channelAfter = await refetchDirectionalChannel(ensured);
 
       // Bob's available rose by exactly the cumulative; Alice's locked dropped by the same.
@@ -176,14 +176,14 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
       const ensured = await ensureChannel(
         alice.wallet,
         bob.wallet.publicKey,
-        AG_USDC_TOKEN_ID,
+        RY_USDC_TOKEN_ID,
         { payeeOwnerSigner: bob.wallet }
       );
       await lockChannelFundsForTest(
         ensured,
         2 * ONE_USDC,
         alice.wallet,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       );
 
       const indexBefore = (await fetchYieldStrategy()).userIndexQ64;
@@ -196,7 +196,7 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
       const message = createCommitmentMessage({
         payerId: alice.participant.participantId,
         payeeId: bob.participant.participantId,
-        tokenId: AG_USDC_TOKEN_ID,
+        tokenId: RY_USDC_TOKEN_ID,
         committedAmount: new anchor.BN(500_000),
       });
       await settleIndividualForTest({
@@ -219,10 +219,10 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
   });
 
   describe("BLS aggregated clearing-round (settle_clearing_round)", () => {
-    it("settles a 3-participant / 6-directed-channel round through the BLS path on agUSDC", async function () {
+    it("settles a 3-participant / 6-directed-channel round through the BLS path on ryUSDC", async function () {
       this.timeout(180_000);
 
-      // Three participants. Each deposits enough agUSDC to act as both payer and payee.
+      // Three participants. Each deposits enough ryUSDC to act as both payer and payee.
       const fixtures = [] as Array<{
         participant: Awaited<ReturnType<typeof createTestParticipant>>;
         blsKeypair: Awaited<ReturnType<typeof registerParticipantBlsKey>>["blsKeypair"];
@@ -251,7 +251,7 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
         const channel = await ensureChannel(
           fixtures[pIdx].participant.wallet,
           fixtures[qIdx].participant.wallet.publicKey,
-          AG_USDC_TOKEN_ID,
+          RY_USDC_TOKEN_ID,
           { payeeOwnerSigner: fixtures[qIdx].participant.wallet }
         );
         channels.set(`${pIdx}>${qIdx}`, channel);
@@ -280,7 +280,7 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
       }));
 
       const message = createClearingRoundMessage({
-        tokenId: AG_USDC_TOKEN_ID,
+        tokenId: RY_USDC_TOKEN_ID,
         version: BLS_CLEARING_ROUND_MESSAGE_VERSION,
         blocks,
       });
@@ -341,8 +341,8 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
       const strategyAfter = await fetchYieldStrategy();
 
       const deltasObserved = balancesBefore.map((before, idx) => {
-        const beforeBalance = getTokenBalance(before, AG_USDC_TOKEN_ID).availableBalance.toNumber();
-        const afterBalance = getTokenBalance(balancesAfter[idx], AG_USDC_TOKEN_ID).availableBalance.toNumber();
+        const beforeBalance = getTokenBalance(before, RY_USDC_TOKEN_ID).availableBalance.toNumber();
+        const afterBalance = getTokenBalance(balancesAfter[idx], RY_USDC_TOKEN_ID).availableBalance.toNumber();
         return afterBalance - beforeBalance;
       });
       // Net per the deltas above.
@@ -363,7 +363,7 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
   });
 
   describe("Cooperative unlock (cooperative_unlock_channel_funds)", () => {
-    it("returns leftover locked agUSDC to the payer when both parties consent", async function () {
+    it("returns leftover locked ryUSDC to the payer when both parties consent", async function () {
       this.timeout(60_000);
 
       const alice = await createTestParticipant();
@@ -382,18 +382,18 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
       const ensured = await ensureChannel(
         alice.wallet,
         bob.wallet.publicKey,
-        AG_USDC_TOKEN_ID,
+        RY_USDC_TOKEN_ID,
         { payeeOwnerSigner: bob.wallet }
       );
       await lockChannelFundsForTest(
         ensured,
         2 * ONE_USDC,
         alice.wallet,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       );
 
       const aliceBefore = await fetchParticipantById(alice.participant.participantId);
-      const aliceAvBefore = getTokenBalance(aliceBefore, AG_USDC_TOKEN_ID).availableBalance.toNumber();
+      const aliceAvBefore = getTokenBalance(aliceBefore, RY_USDC_TOKEN_ID).availableBalance.toNumber();
 
       // Both signers agree to release the full 2 USDC of locked collateral back to Alice.
       await cooperativeUnlockChannelFundsForTest(
@@ -401,11 +401,11 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
         2 * ONE_USDC,
         alice.wallet,
         bob.wallet,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       );
 
       const aliceAfter = await fetchParticipantById(alice.participant.participantId);
-      const aliceAvAfter = getTokenBalance(aliceAfter, AG_USDC_TOKEN_ID).availableBalance.toNumber();
+      const aliceAvAfter = getTokenBalance(aliceAfter, RY_USDC_TOKEN_ID).availableBalance.toNumber();
       const channelAfter = await refetchDirectionalChannel(ensured);
 
       expect(aliceAvAfter - aliceAvBefore).to.equal(2 * ONE_USDC);
@@ -416,7 +416,7 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
   });
 
   describe("Unilateral timelocked unlock (request + execute)", () => {
-    it("releases locked agUSDC after the localnet 2-second channel-unlock timelock", async function () {
+    it("releases locked ryUSDC after the localnet 2-second channel-unlock timelock", async function () {
       this.timeout(60_000);
 
       const alice = await createTestParticipant();
@@ -435,19 +435,19 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
       const ensured = await ensureChannel(
         alice.wallet,
         bob.wallet.publicKey,
-        AG_USDC_TOKEN_ID,
+        RY_USDC_TOKEN_ID,
         { payeeOwnerSigner: bob.wallet }
       );
       await lockChannelFundsForTest(
         ensured,
         3 * ONE_USDC,
         alice.wallet,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       );
 
       const aliceAvBefore = getTokenBalance(
         await fetchParticipantById(alice.participant.participantId),
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       ).availableBalance.toNumber();
 
       // Alice initiates a unilateral 1.5 USDC unlock (Bob is unresponsive; no countersig needed).
@@ -455,7 +455,7 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
         ensured,
         Math.floor(1.5 * ONE_USDC),
         alice.wallet,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       );
 
       // Wait out the localnet timelock (chain_id=3 → channel_unlock_timelock_seconds=2).
@@ -464,12 +464,12 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
       await executeUnlockChannelFundsForTest(
         ensured,
         alice.wallet,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       );
 
       const aliceAvAfter = getTokenBalance(
         await fetchParticipantById(alice.participant.participantId),
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       ).availableBalance.toNumber();
       const channelAfter = await refetchDirectionalChannel(ensured);
 
@@ -504,21 +504,21 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
       const ensured = await ensureChannel(
         alice.wallet,
         bob.wallet.publicKey,
-        AG_USDC_TOKEN_ID,
+        RY_USDC_TOKEN_ID,
         { payeeOwnerSigner: bob.wallet }
       );
       await lockChannelFundsForTest(
         ensured,
         6 * ONE_USDC,
         alice.wallet,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       );
 
       // 1) Bilateral: cumulative_amount = 1 USDC.
       const msg1 = createCommitmentMessage({
         payerId: alice.participant.participantId,
         payeeId: bob.participant.participantId,
-        tokenId: AG_USDC_TOKEN_ID,
+        tokenId: RY_USDC_TOKEN_ID,
         committedAmount: new anchor.BN(ONE_USDC),
       });
       await settleIndividualForTest({
@@ -536,7 +536,7 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
       const msg2 = createCommitmentMessage({
         payerId: alice.participant.participantId,
         payeeId: bob.participant.participantId,
-        tokenId: AG_USDC_TOKEN_ID,
+        tokenId: RY_USDC_TOKEN_ID,
         committedAmount: new anchor.BN(2 * ONE_USDC),
       });
       await settleIndividualForTest({
@@ -553,15 +553,15 @@ describe("v6 — yield-bearing channel + clearing flows", () => {
         4 * ONE_USDC,
         alice.wallet,
         bob.wallet,
-        AG_USDC_TOKEN_ID
+        RY_USDC_TOKEN_ID
       );
       await assertYieldStrategySolvent();
 
       // 4) Withdraw — Alice's remaining 18 USDC (= 20 deposited - 2 paid), Bob's 3 USDC (= 1 + 2).
       const aliceParticipant = await fetchParticipantById(alice.participant.participantId);
       const bobParticipant = await fetchParticipantById(bob.participant.participantId);
-      const aliceShares = getTokenBalance(aliceParticipant, AG_USDC_TOKEN_ID).availableBalance;
-      const bobShares = getTokenBalance(bobParticipant, AG_USDC_TOKEN_ID).availableBalance;
+      const aliceShares = getTokenBalance(aliceParticipant, RY_USDC_TOKEN_ID).availableBalance;
+      const bobShares = getTokenBalance(bobParticipant, RY_USDC_TOKEN_ID).availableBalance;
 
       // Allow a 1-microunit dust window — `accrue_strategy` runs at deposit time and converts the
       // deposited USDC to shares at the current index using floor division, so a 20 USDC deposit

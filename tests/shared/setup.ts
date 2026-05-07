@@ -19,7 +19,7 @@ import {
   getAccount,
   getOrCreateAssociatedTokenAccount,
 } from "@solana/spl-token";
-import { AgonProtocol } from "../../target/types/agon_protocol";
+import { RyvoProtocol } from "../../target/types/ryvo_protocol";
 import { MockYield } from "../../target/types/mock_yield";
 import { expect } from "chai";
 import { ed25519 } from "@noble/curves/ed25519";
@@ -47,7 +47,7 @@ import {
 // Configure the client to use the local cluster.
 anchor.setProvider(anchor.AnchorProvider.env());
 export const provider = anchor.AnchorProvider.env();
-export const program = anchor.workspace.agonProtocol as Program<AgonProtocol>;
+export const program = anchor.workspace.ryvoProtocol as Program<RyvoProtocol>;
 
 // Test accounts - shared across all test files
 export let primaryMint: PublicKey;
@@ -1468,20 +1468,20 @@ export function nextCommitmentAmount(
 }
 
 // ---------------------------------------------------------------------------
-// v6 yield-bearing test helpers (mock-yield + agUSDC).
+// v6 yield-bearing test helpers (mock-yield + ryUSDC).
 //
-// These helpers register agUSDC as token_id=AG_USDC_TOKEN_ID alongside the existing primary
+// These helpers register ryUSDC as token_id=RY_USDC_TOKEN_ID alongside the existing primary
 // plain-token (TOK1, token_id=PRIMARY_TOKEN_ID=1), so existing tests are untouched. New tests can
 // `await getYieldBearingTestbed()` once and then drive yield-bearing flows through the helpers
 // below.
 // ---------------------------------------------------------------------------
 
 // Picked to avoid collisions with token_ids used by other test files (currently 1-4, 11-16).
-export const AG_USDC_TOKEN_ID = 50;
-export const AG_USDC_SYMBOL = "agUSDC";
+export const RY_USDC_TOKEN_ID = 50;
+export const RY_USDC_SYMBOL = "ryUSDC";
 export const PROTOCOL_YIELD_SHARE_BPS = 3_333; // ~33.33% of yield goes to the protocol fee_recipient.
 
-// PDA seeds — must mirror agon-protocol::state::yield_strategy and mock-yield::state.
+// PDA seeds — must mirror ryvo-protocol::state::yield_strategy and mock-yield::state.
 export const YIELD_STRATEGY_SEED = Buffer.from("yield-strategy");
 export const YIELD_SHARE_VAULT_SEED = Buffer.from("yield-share-vault");
 export const RESERVE_SEED = Buffer.from("reserve");
@@ -1538,7 +1538,7 @@ function symbolBytes(s: string): number[] {
 }
 
 export interface YieldBearingTestbed {
-  underlyingMint: PublicKey; // == primaryMint, reused for both TOK1 and agUSDC's underlying.
+  underlyingMint: PublicKey; // == primaryMint, reused for both TOK1 and ryUSDC's underlying.
   reserve: PublicKey;
   shareMint: PublicKey;
   liquidityVault: PublicKey;
@@ -1550,7 +1550,7 @@ export interface YieldBearingTestbed {
 let cachedTestbed: YieldBearingTestbed | null = null;
 
 /**
- * Idempotent bootstrap of the mock-yield reserve + agUSDC yield-bearing token registration.
+ * Idempotent bootstrap of the mock-yield reserve + ryUSDC yield-bearing token registration.
  * Safe to call from any number of test files; the work is done at most once per `anchor test` run.
  *
  * Reuses `primaryMint` as the underlying USDC mint. Mints a generous buffer into liquidity_vault so
@@ -1563,8 +1563,8 @@ export async function getYieldBearingTestbed(): Promise<YieldBearingTestbed> {
   const reserve = findReservePda(primaryMint);
   const shareMint = findShareMintPda(primaryMint);
   const liquidityVault = findLiquidityVaultPda(primaryMint);
-  const yieldStrategy = findYieldStrategyPda(AG_USDC_TOKEN_ID);
-  const shareVault = findYieldShareVaultPda(AG_USDC_TOKEN_ID);
+  const yieldStrategy = findYieldStrategyPda(RY_USDC_TOKEN_ID);
+  const shareVault = findYieldShareVaultPda(RY_USDC_TOKEN_ID);
 
   // 1) mock-yield reserve — initialise once. APY is irrelevant for solvency assertions; tests that
   // care about magnitude can call updateApyBps directly.
@@ -1602,13 +1602,13 @@ export async function getYieldBearingTestbed(): Promise<YieldBearingTestbed> {
     );
   }
 
-  // 3) Register agUSDC at token_id=AG_USDC_TOKEN_ID. The plain TOK1 stays at PRIMARY_TOKEN_ID=1.
+  // 3) Register ryUSDC at token_id=RY_USDC_TOKEN_ID. The plain TOK1 stays at PRIMARY_TOKEN_ID=1.
   const strategyInfo = await provider.connection.getAccountInfo(yieldStrategy);
   if (!strategyInfo) {
     await program.methods
       .registerYieldBearingToken(
-        AG_USDC_TOKEN_ID,
-        symbolBytes(AG_USDC_SYMBOL),
+        RY_USDC_TOKEN_ID,
+        symbolBytes(RY_USDC_SYMBOL),
         PROTOCOL_YIELD_SHARE_BPS
       )
       .accounts({
@@ -1625,7 +1625,7 @@ export async function getYieldBearingTestbed(): Promise<YieldBearingTestbed> {
       .signers([deployer])
       .rpc();
 
-    registeredTokens.set(AG_USDC_TOKEN_ID, {
+    registeredTokens.set(RY_USDC_TOKEN_ID, {
       mint: primaryMint,
       feeRecipientTokenAccount,
     });
@@ -1648,7 +1648,7 @@ export async function getYieldBearingTestbed(): Promise<YieldBearingTestbed> {
   return cachedTestbed;
 }
 
-/** Deposit USDC -> agUSDC for a participant (auto-creates user's USDC ATA + funds it). */
+/** Deposit USDC -> ryUSDC for a participant (auto-creates user's USDC ATA + funds it). */
 export async function depositYieldBearingForTest(params: {
   owner: Keypair;
   /** Pass `participantPda` if the caller already knows it; otherwise we look it up. */
@@ -1672,7 +1672,7 @@ export async function depositYieldBearingForTest(params: {
   );
 
   await program.methods
-    .depositYieldBearing(AG_USDC_TOKEN_ID, new anchor.BN(params.amountUsdc))
+    .depositYieldBearing(RY_USDC_TOKEN_ID, new anchor.BN(params.amountUsdc))
     .accounts({
       participantBucket: participantPda,
       ownerIndexBucket: findOwnerIndexBucketPda(params.owner.publicKey),
@@ -1726,7 +1726,7 @@ export async function claimProtocolYieldFeeForTest(
 ): Promise<void> {
   const testbed = await getYieldBearingTestbed();
   await program.methods
-    .claimProtocolYieldFee(AG_USDC_TOKEN_ID, amountUsdc)
+    .claimProtocolYieldFee(RY_USDC_TOKEN_ID, amountUsdc)
     .accounts({
       yieldStrategy: testbed.yieldStrategy,
       yieldProgram: mockYieldProgram.programId,
@@ -1743,7 +1743,7 @@ export async function claimProtocolYieldFeeForTest(
     .rpc();
 }
 
-/** Internal opt-in: move `amountUsdc` from owner's plain bucket to their agUSDC bucket. */
+/** Internal opt-in: move `amountUsdc` from owner's plain bucket to their ryUSDC bucket. */
 export async function optInYieldForTest(params: {
   owner: Keypair;
   /** The plain token id to debit from. */
@@ -1757,7 +1757,7 @@ export async function optInYieldForTest(params: {
   const amountBN = new anchor.BN(params.amountUsdc.toString());
 
   const sig = await program.methods
-    .optInYield(plainTokenId, AG_USDC_TOKEN_ID, amountBN)
+    .optInYield(plainTokenId, RY_USDC_TOKEN_ID, amountBN)
     .accounts({
       tokenRegistry: findTokenRegistryPda(),
       globalConfig: findGlobalConfigPda(),
@@ -1784,7 +1784,7 @@ export async function optInYieldForTest(params: {
   return { testbed };
 }
 
-/** Internal opt-out: burn `shares` of agUSDC and credit the redeemed USDC to plain bucket. */
+/** Internal opt-out: burn `shares` of ryUSDC and credit the redeemed USDC to plain bucket. */
 export async function optOutYieldForTest(params: {
   owner: Keypair;
   shares: anchor.BN | number | bigint;
@@ -1799,7 +1799,7 @@ export async function optOutYieldForTest(params: {
       : new anchor.BN(params.shares.toString());
 
   const sig = await program.methods
-    .optOutYield(AG_USDC_TOKEN_ID, plainTokenId, sharesBN)
+    .optOutYield(RY_USDC_TOKEN_ID, plainTokenId, sharesBN)
     .accounts({
       tokenRegistry: findTokenRegistryPda(),
       globalConfig: findGlobalConfigPda(),
@@ -1855,7 +1855,7 @@ export async function withdrawYieldBearingForTest(params: {
 
   await program.methods
     .requestWithdrawalYieldBearing(
-      AG_USDC_TOKEN_ID,
+      RY_USDC_TOKEN_ID,
       sharesBN,
       destinationUsdcAta
     )
@@ -1870,7 +1870,7 @@ export async function withdrawYieldBearingForTest(params: {
 
   await program.methods
     .executeWithdrawalYieldBearing(
-      AG_USDC_TOKEN_ID,
+      RY_USDC_TOKEN_ID,
       knownParticipantId(params.owner.publicKey)
     )
     .accounts({

@@ -14,7 +14,7 @@ const DEFAULT_BLS_AGGREGATE_SIGNATURE_BYTES = 48;
 const TOKEN_REGISTRY_SEED = "token-registry";
 const GLOBAL_CONFIG_SEED = "global-config";
 const SYNTHETIC_RECENT_BLOCKHASH = "11111111111111111111111111111111";
-const SYNTHETIC_MESSAGE_DOMAIN = Buffer.from("agon-capacity-v4", "utf8");
+const SYNTHETIC_MESSAGE_DOMAIN = Buffer.from("ryvo-capacity-v4", "utf8");
 const PARTICIPANT_BUCKET_SLOT_COUNT = 9;
 const CHANNEL_BUCKET_SLOT_COUNT = 46;
 

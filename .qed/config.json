@@ -1,6 +1,6 @@
 {
-  "name": "AgonWithdrawalsPilot",
-  "spec": "agon_withdrawals.qedspec",
+  "name": "RyvoWithdrawalsPilot",
+  "spec": "ryvo_withdrawals.qedspec",
   "interfaces_dir": ".qed/interfaces",
   "created_at": "1777030425s-since-epoch"
 }

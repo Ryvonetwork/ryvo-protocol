@@ -2,8 +2,8 @@ import { bls12_381 } from "@noble/curves/bls12-381";
 import { PublicKey } from "@solana/web3.js";
 import { createHash, randomBytes } from "crypto";
 
-const MESSAGE_DOMAIN_TAG = Buffer.from("agon-message-domain-v1", "utf8");
-const BLS_SIGNING_POINT_TAG = Buffer.from("agon-bls-signing-point-v1", "utf8");
+const MESSAGE_DOMAIN_TAG = Buffer.from("ryvo-message-domain-v1", "utf8");
+const BLS_SIGNING_POINT_TAG = Buffer.from("ryvo-bls-signing-point-v1", "utf8");
 const BLS_SCALAR_MODULUS =
   0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001n;
 

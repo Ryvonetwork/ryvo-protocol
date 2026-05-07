@@ -6,23 +6,23 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-agon_protocol = "PBdGbrPEPCcp8oZz42P2gFMEbXDptigPvhMYubVAaoL"
-mock_yield = "21gpQ9K4WRFaiNbJw49QrREgMJd2eVUNSfNGNecKeimX"
+ryvo_protocol = "HuyQoYfBEvVACTKcq8RTiDFm5k5ZBnX5we1UjWBTBeqT"
+mock_yield = "AKimUnWF5CrWeA7XipX23vXCzdKfXGisR8C9cNuKtzGW"
 
 [programs.localnet]
-agon_protocol = "PBdGbrPEPCcp8oZz42P2gFMEbXDptigPvhMYubVAaoL"
-mock_yield = "21gpQ9K4WRFaiNbJw49QrREgMJd2eVUNSfNGNecKeimX"
+ryvo_protocol = "HuyQoYfBEvVACTKcq8RTiDFm5k5ZBnX5we1UjWBTBeqT"
+mock_yield = "AKimUnWF5CrWeA7XipX23vXCzdKfXGisR8C9cNuKtzGW"
 
 [programs.mainnet]
-agon_protocol = "PBdGbrPEPCcp8oZz42P2gFMEbXDptigPvhMYubVAaoL"
-mock_yield = "21gpQ9K4WRFaiNbJw49QrREgMJd2eVUNSfNGNecKeimX"
+ryvo_protocol = "HuyQoYfBEvVACTKcq8RTiDFm5k5ZBnX5we1UjWBTBeqT"
+mock_yield = "AKimUnWF5CrWeA7XipX23vXCzdKfXGisR8C9cNuKtzGW"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
 cluster = "https://devnet.helius-rpc.com/?api-key=3faa0eb3-3be2-42bd-8a96-cd73694301ae"
-wallet = "/home/heis/agon/agon-protocol/keys/devnet-deployer.json"
+wallet = "/home/heis/ryvo/ryvo-protocol/keys/devnet-deployer.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""

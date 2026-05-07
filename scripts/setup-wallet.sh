@@ -2,7 +2,7 @@
 
 # A script to convert a Phantom private key from a .env file to a Solana CLI-compatible JSON array
 # and update the Anchor.toml configuration to use it.
-# Run this from inside the agon-protocol directory.
+# Run this from inside the ryvo-protocol directory.
 
 bootstrap_tooling_path() {
     PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"

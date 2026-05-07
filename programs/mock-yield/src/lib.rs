@@ -17,13 +17,13 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program::set_return_data;
 use anchor_spl::token::{self, Burn, Mint, MintTo, Token, TokenAccount, Transfer};
 
-// Only install the custom heap when this crate is the *entrypoint* program. When agon-protocol
+// Only install the custom heap when this crate is the *entrypoint* program. When ryvo-protocol
 // pulls mock-yield in as a CPI dep (`features = ["cpi"]`), `no-entrypoint` is enabled and we must
 // skip the global allocator macro to avoid two `#[global_allocator]`s in the linked binary.
 #[cfg(all(feature = "custom-heap", not(feature = "no-entrypoint")))]
 solana_allocator::custom_heap!();
 
-declare_id!("21gpQ9K4WRFaiNbJw49QrREgMJd2eVUNSfNGNecKeimX");
+declare_id!("AKimUnWF5CrWeA7XipX23vXCzdKfXGisR8C9cNuKtzGW");
 
 pub const SECONDS_PER_YEAR: u64 = 31_536_000;
 pub const BPS_DENOM: u128 = 10_000;
@@ -462,7 +462,7 @@ pub struct RedeemReserveCollateral<'info> {
     )]
     pub redeemer_underlying: Account<'info, TokenAccount>,
 
-    /// Authority that can burn `redeemer_shares`. For agon-protocol calls this is the
+    /// Authority that can burn `redeemer_shares`. For ryvo-protocol calls this is the
     /// `GlobalConfig` PDA (the `share_vault` owner). For end-user direct redemptions it would be
     /// the wallet holding the cUSDC.
     pub share_authority: Signer<'info>,
