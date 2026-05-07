@@ -1,0 +1,670 @@
+// Generated from Anchor IDL — review and complete TODO items
+//
+// Auto-derived: state fields, handlers, contexts, PDAs, errors
+// TODO: guards, effects, lifecycle transitions, properties, invariants
+
+spec AgonProtocol
+
+// TODO: Replace with deployed program ID
+program_id "11111111111111111111111111111111"
+
+type ChannelAuthorizedSignerUpdateRequested
+  | Uninitialized
+  | Active of {
+      payer_id                  : U32,
+      payee_id                  : U32,
+      token_id                  : U16,
+      current_authorized_signer : Pubkey,
+      pending_authorized_signer : Pubkey,
+      activate_at               : I64
+    }
+  | Closed
+
+type ChannelAuthorizedSignerUpdated
+  | Uninitialized
+  | Active of {
+      payer_id                   : U32,
+      payee_id                   : U32,
+      token_id                   : U16,
+      previous_authorized_signer : Pubkey,
+      new_authorized_signer      : Pubkey
+    }
+  | Closed
+
+type ChannelCreated
+  | Uninitialized
+  | Active of {
+      payer_id : U32,
+      payee_id : U32,
+      token_id : U16
+    }
+  | Closed
+
+type ChannelFundsLocked
+  | Uninitialized
+  | Active of {
+      payer_id     : U32,
+      payee_id     : U32,
+      token_id     : U16,
+      amount       : U64,
+      total_locked : U64
+    }
+  | Closed
+
+type ChannelFundsUnlocked
+  | Uninitialized
+  | Active of {
+      payer_id         : U32,
+      payee_id         : U32,
+      token_id         : U16,
+      released_amount  : U64,
+      remaining_locked : U64
+    }
+  | Closed
+
+type ChannelState
+  | Uninitialized
+  | Active of {
+      token_id                              : U16,
+      payer_id                              : U32,
+      payee_id                              : U32,
+      settled_cumulative                    : U64,
+      locked_balance                        : U64,
+      authorized_signer                     : Pubkey,
+      pending_unlock_amount                 : U64,
+      unlock_requested_at                   : I64,
+      pending_authorized_signer             : Pubkey,
+      authorized_signer_update_requested_at : I64,
+      bump                                  : U8
+    }
+  | Closed
+
+type ChannelUnlockRequested
+  | Uninitialized
+  | Active of {
+      payer_id         : U32,
+      payee_id         : U32,
+      token_id         : U16,
+      requested_amount : U64,
+      unlock_at        : I64
+    }
+  | Closed
+
+type ClearingRoundSettled
+  | Uninitialized
+  | Active of {
+      token_id           : U16,
+      participant_count  : U16,
+      channel_count      : U16,
+      total_gross        : U64,
+      total_net_adjusted : U64
+    }
+  | Closed
+
+type CommitmentBundleSettled
+  | Uninitialized
+  | Active of {
+      payee_id      : U32,
+      token_id      : U16,
+      channel_count : U16,
+      total         : U64
+    }
+  | Closed
+
+type ConfigAuthorityTransferStarted
+  | Uninitialized
+  | Active of {
+      current_authority : Pubkey,
+      pending_authority : Pubkey
+    }
+  | Closed
+
+type ConfigAuthorityTransferred
+  | Uninitialized
+  | Active of {
+      previous_authority : Pubkey,
+      new_authority      : Pubkey
+    }
+  | Closed
+
+type ConfigUpdated
+  | Uninitialized
+  | Active of {
+      authority     : Pubkey,
+      fee_recipient : Pubkey,
+      fee_bps       : U16,
+      chain_id      : U16
+    }
+  | Closed
+
+type Deposited
+  | Uninitialized
+  | Active of {
+      participant_id : U32,
+      token_id       : U16,
+      amount         : U64
+    }
+  | Closed
+
+type GlobalConfig
+  | Uninitialized
+  | Active of {
+      authority                   : Pubkey,
+      fee_recipient               : Pubkey,
+      fee_bps                     : U16,
+      withdrawal_timelock_seconds : I64,
+      registration_fee_lamports   : U64,
+      next_participant_id         : U32,
+      bump                        : U8,
+      chain_id                    : U16,
+      message_domain              : U64,
+      pending_authority           : Pubkey,
+      _reserved                   : U64
+    }
+  | Closed
+
+type InboundChannelPolicyUpdated
+  | Uninitialized
+  | Active of {
+      participant_id         : U32,
+      inbound_channel_policy : U8
+    }
+  | Closed
+
+type IndividualSettled
+  | Uninitialized
+  | Active of {
+      payer_id         : U32,
+      payee_id         : U32,
+      token_id         : U16,
+      amount           : U64,
+      committed_amount : U64,
+      from_locked      : Bool
+    }
+  | Closed
+
+type ParticipantAccount
+  | Uninitialized
+  | Active of {
+      owner                  : Pubkey,
+      participant_id         : U32,
+      token_balances         : U64,
+      bump                   : U8,
+      inbound_channel_policy : U8,
+      _reserved              : U64
+    }
+  | Closed
+
+type ParticipantInitialized
+  | Uninitialized
+  | Active of {
+      owner                     : Pubkey,
+      participant_id            : U32,
+      registration_fee_lamports : U64,
+      inbound_channel_policy    : U8
+    }
+  | Closed
+
+type RegistryAuthorityTransferStarted
+  | Uninitialized
+  | Active of {
+      current_authority : Pubkey,
+      pending_authority : Pubkey
+    }
+  | Closed
+
+type RegistryAuthorityTransferred
+  | Uninitialized
+  | Active of {
+      previous_authority : Pubkey,
+      new_authority      : Pubkey
+    }
+  | Closed
+
+type TokenBalance
+  | Uninitialized
+  | Active of {
+      token_id               : U16,
+      available_balance      : U64,
+      withdrawing_balance    : U64,
+      withdrawal_unlock_at   : I64,
+      withdrawal_destination : Pubkey
+    }
+  | Closed
+
+type TokenEntry
+  | Uninitialized
+  | Active of {
+      id            : U16,
+      mint          : Pubkey,
+      decimals      : U8,
+      symbol        : U64,
+      registered_at : I64
+    }
+  | Closed
+
+type TokenRegistry
+  | Uninitialized
+  | Active of {
+      authority         : Pubkey,
+      tokens            : U64,
+      bump              : U8,
+      pending_authority : Pubkey
+    }
+  | Closed
+
+type WithdrawalCancelled
+  | Uninitialized
+  | Active of {
+      participant_id  : U32,
+      token_id        : U16,
+      amount_returned : U64
+    }
+  | Closed
+
+type WithdrawalRequested
+  | Uninitialized
+  | Active of {
+      participant_id : U32,
+      token_id       : U16,
+      amount         : U64,
+      destination    : Pubkey,
+      unlock_at      : I64
+    }
+  | Closed
+
+type Withdrawn
+  | Uninitialized
+  | Active of {
+      participant_id : U32,
+      token_id       : U16,
+      net_amount     : U64,
+      fee_amount     : U64,
+      destination    : Pubkey
+    }
+  | Closed
+
+pda global_config ["global-config"]
+pda token_registry ["token-registry"]
+pda participant_account ["participant", owner]
+pda payer_account ["participant", owner]
+pda payee_account ["participant", owner]
+pda channel_state ["channel-v2", participant_id, participant_id, token_id]
+pda vault_token_account ["vault-token-account", token_id]
+
+type Error
+  | InsufficientBalance
+  | WithdrawalAlreadyPending
+  | NoWithdrawalPending
+  | WithdrawalLocked
+  | InvalidWithdrawalDestination
+  | InvalidAuthority
+  | InvalidFeeRecipient
+  | InvalidInboundChannelPolicy
+  | UnauthorizedInitializer
+  | InvalidFeeBps
+  | InvalidRegistrationFee
+  | InvalidDepositFor
+  | AmountMustBePositive
+  | CommitmentAmountMustIncrease
+  | InvalidAuthoritySignature
+  | SignatureAlreadyUsed
+  | ParticipantNotFound
+  | AccountIdMismatch
+  | InvalidCommitmentMessage
+  | InvalidClearingRoundMessage
+  | NetFlowImbalance
+  | NetPositionOverflow
+  | MathOverflow
+  | InvalidChainId
+  | InvalidMessageDomain
+  | InvalidSignature
+  | CpiNotAllowed
+  | InvalidEd25519Data
+  | ChannelNotInitialized
+  | ChannelAlreadyExists
+  | UnauthorizedSettler
+  | InboundChannelConsentRequired
+  | InboundChannelsDisabled
+  | SelfChannelNotAllowed
+  | NoPendingAuthorityTransfer
+  | UnauthorizedPendingAuthority
+  | TooManyTokenBalances
+  | TokenNotFound
+  | TokenAlreadyRegistered
+  | TokenIdAlreadyInUse
+  | UnauthorizedTokenRegistration
+  | InvalidTokenId
+  | InvalidTokenSymbol
+  | InvalidTokenDecimals
+  | TokenRegistryFull
+  | InvalidTokenMint
+  | InsufficientLockedBalance
+  | NoChannelUnlockPending
+  | InvalidAuthorizedSigner
+  | NoAuthorizedSignerUpdatePending
+
+/// Pending config authority accepts the handoff.
+handler accept_config_authority : State.Active -> State.Closed {
+  auth pending_authority
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    global_config : writable, pda [global_config]
+    pending_authority : signer
+  }
+}
+
+/// Pending token registry authority accepts the handoff.
+handler accept_registry_authority : State.Active -> State.Closed {
+  auth pending_authority
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    token_registry : token, writable, pda [token_registry]
+    pending_authority : signer
+  }
+}
+
+/// Cancel a pending withdrawal for a specific token.
+handler cancel_withdrawal (token_id : U16) : State.Active -> State.Closed {
+  auth owner
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    participant_account : writable, pda [participant_account]
+    owner : signer, authority participant_account
+  }
+}
+
+/// Create a token-specific channel from payer to payee. Must be called before any payment commitments are signed or settled. Payer signs and pays ~0.002 SOL rent. Ensures payees and facilitators never pay for creation.
+handler create_channel (token_id : U16) (authorized_signer : U64) : State.Uninitialized -> State.Active {
+  auth owner
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    token_registry : token, pda [token_registry]
+    payer_account : pda [payer_account]
+    payee_account : pda [payee_account]
+    channel_state : writable, pda [channel_state]
+    owner : signer, writable, authority payer_account
+    payee_owner : signer
+    system_program : program
+  }
+}
+
+/// Deposit tokens into the vault (credits signer's vault).
+handler deposit (token_id : U16) (amount : U64) : State.Active -> State.Closed {
+  auth owner
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  // TODO: Add transfers block for token transfer between owner_token_account and vault_token_account
+  accounts {
+    token_registry : token, pda [token_registry]
+    global_config : pda [global_config]
+    participant_account : writable, pda [participant_account]
+    owner_token_account : token, writable
+    vault_token_account : token, writable, pda [vault_token_account]
+    owner : signer, authority participant_account
+    token_program : program
+  }
+}
+
+/// Deposit a registered token for multiple participants in one tx. Funder's ATA to vault; credits each recipient. amounts.len() must equal remaining_accounts (ParticipantAccounts). Max 16 recipients.
+handler deposit_for (token_id : U16) (amounts : U64) : State.Active -> State.Active {
+  auth funder
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  // TODO: Add transfers block for token transfer between funder_token_account and vault_token_account
+  accounts {
+    token_registry : token, pda [token_registry]
+    global_config : pda [global_config]
+    funder_token_account : token, writable
+    vault_token_account : token, writable, pda [vault_token_account]
+    funder : signer
+    token_program : program
+  }
+}
+
+/// Execute a previously requested collateral unlock once its timelock expires.
+handler execute_unlock_channel_funds (token_id : U16) : State.Active -> State.Closed {
+  auth owner
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    global_config : pda [global_config]
+    payer_account : writable, pda [payer_account]
+    payee_account : pda [payee_account]
+    channel_state : writable, pda [channel_state]
+    owner : signer, authority payer_account
+  }
+}
+
+/// Execute a previously requested authorized-signer rotation once its timelock expires.
+handler execute_update_channel_authorized_signer (token_id : U16) : State.Active -> State.Closed {
+  auth owner
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    global_config : pda [global_config]
+    payer_account : pda [payer_account]
+    payee_account : pda [payee_account]
+    channel_state : writable, pda [channel_state]
+    owner : signer, authority payer_account
+  }
+}
+
+/// Execute a withdrawal for a specific token after timelock expires.
+handler execute_withdrawal_timelocked (token_id : U16) : State.Active -> State.Active {
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  // TODO: Add transfers block for token transfer between vault_token_account and fee_recipient_token_account
+  accounts {
+    token_registry : token, pda [token_registry]
+    global_config : pda [global_config]
+    participant_account : writable, pda [participant_account]
+    vault_token_account : token, writable, pda [vault_token_account]
+    withdrawal_destination : writable
+    fee_recipient_token_account : token, writable
+    token_program : program
+  }
+}
+
+/// Initialize the protocol: creates GlobalConfig PDA. `chain_id` selects the immutable settlement domain and withdrawal timelock.
+handler initialize (chain_id : U16) (fee_bps : U16) (registration_fee_lamports : U64) (initial_authority : U64) : State.Uninitialized -> State.Active {
+  auth upgrade_authority
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    global_config : writable, pda [global_config]
+    fee_recipient : readonly
+    upgrade_authority : signer, writable
+    program : readonly
+    program_data : readonly
+    system_program : program
+  }
+}
+
+/// One-time participant registration.
+handler initialize_participant : State.Uninitialized -> State.Active {
+  auth owner
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    global_config : writable, pda [global_config]
+    participant_account : writable, pda [participant_account]
+    fee_recipient : writable
+    owner : signer, writable
+    system_program : program
+  }
+}
+
+/// Initialize the token registry (authority only, called once after program deployment).
+handler initialize_token_registry : State.Uninitialized -> State.Active {
+  auth authority
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    token_registry : token, writable, pda [token_registry]
+    global_config : pda [global_config]
+    authority : signer, writable
+    system_program : program
+  }
+}
+
+/// Lock tokens as ring-fenced collateral for a specific payee channel.
+handler lock_channel_funds (token_id : U16) (amount : U64) : State.Active -> State.Closed {
+  auth owner
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    token_registry : token, pda [token_registry]
+    payer_account : writable, pda [payer_account]
+    payee_account : pda [payee_account]
+    channel_state : writable, pda [channel_state]
+    owner : signer, writable, authority payer_account
+    system_program : program
+  }
+}
+
+/// Register a new token in the registry (authority only).
+handler register_token (token_id : U16) (symbol_bytes : U64) : State.Active -> State.Active {
+  auth authority
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  // TODO: Add transfers block for token transfer between token_registry and vault_token_account
+  accounts {
+    token_registry : token, writable, pda [token_registry]
+    vault_token_account : token, writable, pda [vault_token_account]
+    mint : readonly
+    global_config : pda [global_config]
+    authority : signer, writable
+    token_program : program
+    system_program : program
+    rent : readonly
+  }
+}
+
+/// Request a timelocked partial unlock of channel collateral.
+handler request_unlock_channel_funds (token_id : U16) (amount : U64) : State.Active -> State.Closed {
+  auth owner
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    global_config : pda [global_config]
+    payer_account : pda [payer_account]
+    payee_account : pda [payee_account]
+    channel_state : writable, pda [channel_state]
+    owner : signer, authority payer_account
+  }
+}
+
+/// Request a timelocked rotation of the channel's authorized signer.
+handler request_update_channel_authorized_signer (token_id : U16) (new_signer : Pubkey) : State.Active -> State.Closed {
+  auth owner
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    global_config : pda [global_config]
+    payer_account : pda [payer_account]
+    payee_account : pda [payee_account]
+    channel_state : writable, pda [channel_state]
+    owner : signer, authority payer_account
+  }
+}
+
+/// Request a timelocked withdrawal for a specific token.
+handler request_withdrawal (token_id : U16) (amount : U64) (destination : Pubkey) : State.Active -> State.Closed {
+  auth owner
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    token_registry : token, pda [token_registry]
+    global_config : pda [global_config]
+    participant_account : writable, pda [participant_account]
+    withdrawal_destination : readonly
+    owner : signer, authority participant_account
+  }
+}
+
+/// Cooperative clearing round: advances many channels and applies only net participant balance changes.
+handler settle_clearing_round : State.Active -> State.Active {
+  auth submitter
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    token_registry : token, pda [token_registry]
+    global_config : pda [global_config]
+    submitter : signer, writable
+    instructions_sysvar : readonly
+  }
+}
+
+/// Settle many latest commitments for one payee across many unilateral channels.
+handler settle_commitment_bundle (count : U8) : State.Active -> State.Active {
+  auth submitter
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    token_registry : token, pda [token_registry]
+    global_config : pda [global_config]
+    payee_account : writable, pda [payee_account]
+    submitter : signer, writable
+    instructions_sysvar : readonly
+  }
+}
+
+/// Settle a single payment commitment. Submitter must be the payee or an authorized settler.
+handler settle_individual : State.Active -> State.Closed {
+  auth submitter
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    token_registry : token, pda [token_registry]
+    global_config : pda [global_config]
+    payer_account : writable, pda [payer_account]
+    payee_account : writable, pda [payee_account]
+    channel_state : writable, pda [channel_state]
+    submitter : signer, writable
+    instructions_sysvar : readonly
+  }
+}
+
+/// Update protocol configuration (authority only). Settlement chain_id and withdrawal timelock are immutable and cannot be changed.
+handler update_config (new_authority : U64) (new_fee_recipient : U64) (new_fee_bps : U64) (new_registration_fee_lamports : U64) : State.Active -> State.Closed {
+  auth authority
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    global_config : writable, pda [global_config]
+    authority : signer, authority global_config
+  }
+}
+
+/// Update the participant's inbound channel policy.
+handler update_inbound_channel_policy (inbound_channel_policy : U8) : State.Active -> State.Closed {
+  auth owner
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    participant_account : writable, pda [participant_account]
+    owner : signer, authority participant_account
+  }
+}
+
+/// Nominate a pending token registry authority.
+handler update_registry_authority (new_authority : Pubkey) : State.Active -> State.Active {
+  auth current_authority
+  // TODO: Add guard clause
+  // TODO: Add effect block
+  accounts {
+    token_registry : token, writable, pda [token_registry]
+    current_authority : signer
+  }
+}
+
+// TODO: Add properties
+// Example: property conservation { expr state.total_in >= state.total_out  preserved_by all }
+
+// TODO: Add invariants
+// Example: invariant conservation "total tokens preserved"

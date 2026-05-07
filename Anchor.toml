@@ -6,20 +6,23 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-agon_protocol = "DE4vmRRDu1EBj98pD9AuZmdTPFAyDChMmRoPRscze5g"
+agon_protocol = "PBdGbrPEPCcp8oZz42P2gFMEbXDptigPvhMYubVAaoL"
+mock_yield = "21gpQ9K4WRFaiNbJw49QrREgMJd2eVUNSfNGNecKeimX"
 
 [programs.localnet]
-agon_protocol = "DE4vmRRDu1EBj98pD9AuZmdTPFAyDChMmRoPRscze5g"
+agon_protocol = "PBdGbrPEPCcp8oZz42P2gFMEbXDptigPvhMYubVAaoL"
+mock_yield = "21gpQ9K4WRFaiNbJw49QrREgMJd2eVUNSfNGNecKeimX"
 
 [programs.mainnet]
-agon_protocol = "DE4vmRRDu1EBj98pD9AuZmdTPFAyDChMmRoPRscze5g"
+agon_protocol = "PBdGbrPEPCcp8oZz42P2gFMEbXDptigPvhMYubVAaoL"
+mock_yield = "21gpQ9K4WRFaiNbJw49QrREgMJd2eVUNSfNGNecKeimX"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
-wallet = "~/agon/agon-protocol/keys/devnet-deployer.json"
+cluster = "https://devnet.helius-rpc.com/?api-key=3faa0eb3-3be2-42bd-8a96-cd73694301ae"
+wallet = "/home/heis/agon/agon-protocol/keys/devnet-deployer.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""

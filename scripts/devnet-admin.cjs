@@ -2,16 +2,23 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const anchor = require("@coral-xyz/anchor");
 const { Program } = require("@coral-xyz/anchor");
 const { Connection, Keypair, PublicKey, SystemProgram } = require("@solana/web3.js");
 const { getOrCreateAssociatedTokenAccount } = require("@solana/spl-token");
+const { loadProjectRpcEnv, resolveProjectRpcUrl } = require("./lib/rpc-env.cjs");
+
+loadProjectRpcEnv(process.cwd());
 
 const GLOBAL_CONFIG_SEED = "global-config";
 const TOKEN_REGISTRY_SEED = "token-registry";
-const PARTICIPANT_SEED = "participant";
+const PARTICIPANT_BUCKET_SEED = "participant-bucket-v2";
+const OWNER_INDEX_BUCKET_SEED = "owner-index-bucket-v2";
 const VAULT_TOKEN_ACCOUNT_SEED = "vault-token-account";
+const PARTICIPANT_BUCKET_SLOT_COUNT = 9;
+const OWNER_INDEX_BUCKET_COUNT = 1024;
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
@@ -60,7 +67,7 @@ function createWallet(payer) {
 
 function loadProvider() {
   const rpcEndpoint =
-    process.env.ANCHOR_PROVIDER_URL ?? "https://api.devnet.solana.com";
+    process.env.ANCHOR_PROVIDER_URL ?? resolveProjectRpcUrl("devnet");
   const walletPath =
     process.env.ANCHOR_WALLET ??
     path.join(process.cwd(), "keys", "devnet-deployer.json");
@@ -98,11 +105,115 @@ function findTokenRegistryPda(programId) {
   )[0];
 }
 
-function findParticipantPda(programId, owner) {
+function u32Le(value) {
+  return new anchor.BN(value).toArrayLike(Buffer, "le", 4);
+}
+
+function participantBucketIdForParticipantId(participantId) {
+  return Math.floor(participantId / PARTICIPANT_BUCKET_SLOT_COUNT);
+}
+
+function participantBucketSlotIndex(participantId) {
+  return participantId % PARTICIPANT_BUCKET_SLOT_COUNT;
+}
+
+function ownerIndexBucketIdForOwner(owner) {
+  const digest = crypto.createHash("sha256").update(owner.toBuffer()).digest();
+  return digest.readUInt32LE(0) % OWNER_INDEX_BUCKET_COUNT;
+}
+
+function findParticipantBucketPdaById(programId, participantId) {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from(PARTICIPANT_SEED), owner.toBytes()],
+    [
+      Buffer.from(PARTICIPANT_BUCKET_SEED),
+      u32Le(participantBucketIdForParticipantId(participantId)),
+    ],
     programId
   )[0];
+}
+
+function findOwnerIndexBucketPda(programId, owner) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from(OWNER_INDEX_BUCKET_SEED), u32Le(ownerIndexBucketIdForOwner(owner))],
+    programId
+  )[0];
+}
+
+function readRawU64(data, offset) {
+  return new anchor.BN(data.subarray(offset, offset + 8), "le");
+}
+
+function readRawI64(data, offset) {
+  return new anchor.BN(data.readBigInt64LE(offset).toString());
+}
+
+function readRawPubkey(data, offset) {
+  return new PublicKey(data.subarray(offset, offset + 32));
+}
+
+async function fetchRawParticipantBucketSlot(provider, participantPda, participantId) {
+  const account = await provider.connection.getAccountInfo(participantPda);
+  if (!account) {
+    throw new Error(`Participant bucket ${participantPda.toString()} was not found`);
+  }
+  const data = account.data;
+  const slotOffset = 13 + participantBucketSlotIndex(participantId) * 1079;
+  const initialized = data[slotOffset] !== 0;
+  const actualParticipantId = data.readUInt32LE(slotOffset + 33);
+  if (!initialized || actualParticipantId !== participantId) {
+    throw new Error(`Participant bucket slot ${participantId} is not initialized`);
+  }
+  const tokenBalances = Array.from({ length: 16 }, (_, index) => {
+    const offset = slotOffset + 135 + index * 59;
+    return {
+      initialized: data[offset] !== 0,
+      tokenId: data.readUInt16LE(offset + 1),
+      availableBalance: readRawU64(data, offset + 3),
+      withdrawingBalance: readRawU64(data, offset + 11),
+      withdrawalUnlockAt: readRawI64(data, offset + 19),
+      withdrawalDestination: readRawPubkey(data, offset + 27),
+    };
+  });
+  return {
+    initialized,
+    owner: readRawPubkey(data, slotOffset + 1),
+    participantId: actualParticipantId,
+    inboundChannelPolicy: data[slotOffset + 37],
+    blsSchemeVersion: data[slotOffset + 38],
+    blsPubkeyCompressed: Array.from(data.subarray(slotOffset + 39, slotOffset + 135)),
+    tokenBalances,
+  };
+}
+
+async function fetchParticipantForOwner(program, owner) {
+  const ownerIndexBucketPda = findOwnerIndexBucketPda(program.programId, owner);
+  let ownerIndexBucket;
+  try {
+    ownerIndexBucket = await program.account.ownerIndexBucket.fetch(ownerIndexBucketPda);
+  } catch {
+    return null;
+  }
+
+  const ownerSlot = ownerIndexBucket.slots.find(
+    (slot) => slot.initialized && slot.owner.toString() === owner.toString()
+  );
+  if (!ownerSlot) {
+    return null;
+  }
+
+  const participantId = Number(ownerSlot.participantId);
+  const participantPda = findParticipantBucketPdaById(program.programId, participantId);
+  const participant = await fetchRawParticipantBucketSlot(
+    program.provider,
+    participantPda,
+    participantId
+  );
+
+  return {
+    participantPda,
+    ownerIndexBucketPda,
+    participant,
+  };
 }
 
 function findVaultTokenAccountPda(programId, tokenId) {
@@ -188,6 +299,8 @@ async function writeDeploymentConfig(program, provider) {
     feeBps: globalConfig.feeBps,
     registrationFeeLamports: globalConfig.registrationFeeLamports.toNumber(),
     withdrawalTimelockSeconds: globalConfig.withdrawalTimelockSeconds.toNumber(),
+    channelUnlockTimelockSeconds:
+      globalConfig.channelUnlockTimelockSeconds?.toNumber?.() ?? null,
     tokens,
     deployedAt: new Date().toISOString(),
   };
@@ -243,57 +356,84 @@ async function ensureToken(program, provider, tokenId, mintAddress, symbol) {
 async function ensureParticipant(program, provider) {
   const globalConfigPda = findGlobalConfigPda(program.programId);
   const globalConfig = await program.account.globalConfig.fetch(globalConfigPda);
-  const participantPda = findParticipantPda(
-    program.programId,
+  let participantRecord = await fetchParticipantForOwner(
+    program,
     provider.wallet.publicKey
   );
 
-  let participant;
-  try {
-    participant = await program.account.participantAccount.fetch(participantPda);
-  } catch {
+  if (!participantRecord) {
+    const participantId = Number(globalConfig.nextParticipantId);
+    const participantPda = findParticipantBucketPdaById(
+      program.programId,
+      participantId
+    );
+    const ownerIndexBucketPda = findOwnerIndexBucketPda(
+      program.programId,
+      provider.wallet.publicKey
+    );
     await program.methods
-      .initializeParticipant()
+      .initializeParticipant(
+        participantBucketIdForParticipantId(participantId),
+        ownerIndexBucketIdForOwner(provider.wallet.publicKey)
+      )
       .accounts({
         globalConfig: globalConfigPda,
-        participantAccount: participantPda,
+        participantBucket: participantPda,
+        ownerIndexBucket: ownerIndexBucketPda,
         feeRecipient: new PublicKey(globalConfig.feeRecipient.toString()),
         owner: provider.wallet.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .signers([provider.wallet.payer])
       .rpc();
-    participant = await program.account.participantAccount.fetch(participantPda);
+    participantRecord = await fetchParticipantForOwner(
+      program,
+      provider.wallet.publicKey
+    );
+  }
+  if (!participantRecord) {
+    throw new Error("Participant registration did not produce a bucket slot");
   }
 
   return {
-    participantPda: participantPda.toString(),
-    participantId: participant.participantId,
-    owner: participant.owner.toString(),
-    inboundChannelPolicy: participant.inboundChannelPolicy,
+    participantPda: participantRecord.participantPda.toString(),
+    participantId: participantRecord.participant.participantId,
+    owner: participantRecord.participant.owner.toString(),
+    inboundChannelPolicy: participantRecord.participant.inboundChannelPolicy,
   };
 }
 
 async function setInboundPolicy(program, provider, policy) {
-  const participantPda = findParticipantPda(
-    program.programId,
+  let participantRecord = await fetchParticipantForOwner(
+    program,
     provider.wallet.publicKey
   );
+  if (!participantRecord) {
+    await ensureParticipant(program, provider);
+    participantRecord = await fetchParticipantForOwner(
+      program,
+      provider.wallet.publicKey
+    );
+  }
+  if (!participantRecord) {
+    throw new Error("Participant must be initialized before setting policy");
+  }
 
   await program.methods
     .updateInboundChannelPolicy(policy)
     .accounts({
-      participantAccount: participantPda,
+      participantBucket: participantRecord.participantPda,
+      ownerIndexBucket: participantRecord.ownerIndexBucketPda,
       owner: provider.wallet.publicKey,
     })
     .rpc();
 
-  const participant = await program.account.participantAccount.fetch(participantPda);
+  participantRecord = await fetchParticipantForOwner(program, provider.wallet.publicKey);
   return {
-    participantPda: participantPda.toString(),
-    participantId: participant.participantId,
-    owner: participant.owner.toString(),
-    inboundChannelPolicy: participant.inboundChannelPolicy,
+    participantPda: participantRecord.participantPda.toString(),
+    participantId: participantRecord.participant.participantId,
+    owner: participantRecord.participant.owner.toString(),
+    inboundChannelPolicy: participantRecord.participant.inboundChannelPolicy,
   };
 }
 

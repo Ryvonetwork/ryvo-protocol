@@ -1,20 +1,46 @@
 use anchor_lang::prelude::*;
 
-use crate::balance_deltas::{
-    add_balance_delta, apply_balance_delta, find_balance_delta, ParticipantBalanceDelta,
-};
+use crate::balance_deltas::{add_balance_delta, ParticipantBalanceDelta};
 use crate::ed25519;
 use crate::errors::VaultError;
 use crate::events::CommitmentBundleSettled;
-use crate::instructions::settle_individual::parse_commitment_message;
-use crate::state::{ChannelState, GlobalConfig, ParticipantAccount, TokenRegistry};
+use crate::instructions::settle_individual::{parse_commitment_message, ParsedCommitmentMessage};
+use crate::state::{ChannelBucket, GlobalConfig, ParticipantBucket, TokenRegistry};
 
-struct BundleEntry {
-    payer_id: u32,
-    payer_index: usize,
-    channel_index: usize,
-    committed_amount: u64,
-    locked_consumed: u64,
+struct ParsedBundleCommitment {
+    parsed: ParsedCommitmentMessage,
+    signer_pubkey: Pubkey,
+}
+
+fn insert_seen_sorted_u32(values: &mut Vec<u32>, value: u32) -> bool {
+    match values.binary_search(&value) {
+        Ok(_) => false,
+        Err(index) => {
+            values.insert(index, value);
+            true
+        }
+    }
+}
+
+fn insert_unique_sorted_u64(values: &mut Vec<u64>, value: u64) -> Result<()> {
+    match values.binary_search(&value) {
+        Ok(_) => Err(error!(VaultError::InvalidCommitmentMessage)),
+        Err(index) => {
+            values.insert(index, value);
+            Ok(())
+        }
+    }
+}
+
+fn lane_key(payer_id: u32, payee_id: u32) -> u64 {
+    ((payer_id as u64) << 32) | payee_id as u64
+}
+
+fn find_bucket_account_index(bindings: &[(u32, usize)], bucket_id: u32) -> Result<usize> {
+    bindings
+        .binary_search_by_key(&bucket_id, |(bound_bucket_id, _)| *bound_bucket_id)
+        .map(|index| bindings[index].1)
+        .map_err(|_| error!(VaultError::ParticipantNotFound))
 }
 
 pub fn handler<'info>(
@@ -32,18 +58,18 @@ pub fn handler<'info>(
         VaultError::InvalidCommitmentMessage
     );
     let remaining = &ctx.remaining_accounts;
-    let payee = &mut ctx.accounts.payee_account;
     let submitter = ctx.accounts.submitter.key();
 
     let mut token_id: Option<u16> = None;
+    let mut payee_id: Option<u32> = None;
     let mut total: u64 = 0;
-    let mut seen_channel_accounts = Vec::with_capacity(count as usize);
-    let mut bundle_entries = Vec::with_capacity(count as usize);
+    let mut seen_lane_keys = Vec::with_capacity(count as usize);
+    let mut parsed_commitments = Vec::with_capacity(count as usize);
+    let mut seen_participant_bucket_ids = Vec::with_capacity(count as usize + 1);
+    let mut participant_bucket_ids: Vec<u32> = Vec::with_capacity(count as usize + 1);
+    let mut channel_bucket_bindings: Vec<(u64, usize)> = Vec::with_capacity(count as usize);
+    let mut processed_channel_count = 0u16;
     let mut balance_deltas: Vec<ParticipantBalanceDelta> = Vec::with_capacity((count as usize) + 1);
-    require!(
-        remaining.len() == count as usize * 2,
-        VaultError::InvalidCommitmentMessage
-    );
 
     for i in 0..count as usize {
         let offsets = ed25519::parse_ed25519_offsets(&ix_data, i as u16)?;
@@ -52,11 +78,6 @@ pub fn handler<'info>(
 
         let parsed = parse_commitment_message(&message, &ctx.accounts.global_config)?;
 
-        ctx.accounts
-            .token_registry
-            .find_token(parsed.token_id)
-            .ok_or(VaultError::TokenNotFound)?;
-
         match token_id {
             Some(existing) => require!(
                 existing == parsed.token_id,
@@ -64,98 +85,145 @@ pub fn handler<'info>(
             ),
             None => token_id = Some(parsed.token_id),
         }
+        match payee_id {
+            Some(existing) => require!(existing == parsed.payee_id, VaultError::AccountIdMismatch),
+            None => {
+                payee_id = Some(parsed.payee_id);
+                let payee_bucket_id =
+                    ParticipantBucket::bucket_id_for_participant_id(parsed.payee_id);
+                if insert_seen_sorted_u32(&mut seen_participant_bucket_ids, payee_bucket_id) {
+                    participant_bucket_ids.push(payee_bucket_id);
+                }
+            }
+        }
+        let payer_bucket_id = ParticipantBucket::bucket_id_for_participant_id(parsed.payer_id);
+        if insert_seen_sorted_u32(&mut seen_participant_bucket_ids, payer_bucket_id) {
+            participant_bucket_ids.push(payer_bucket_id);
+        }
+        parsed_commitments.push(ParsedBundleCommitment {
+            parsed,
+            signer_pubkey,
+        });
+    }
 
-        let submitter_ok = submitter == payee.owner
+    let batch_token_id = token_id.ok_or(error!(VaultError::InvalidCommitmentMessage))?;
+    ctx.accounts
+        .token_registry
+        .find_token(batch_token_id)
+        .ok_or(VaultError::TokenNotFound)?;
+    let payee_id = payee_id.ok_or(error!(VaultError::InvalidCommitmentMessage))?;
+    require!(
+        remaining.len() >= participant_bucket_ids.len(),
+        VaultError::InvalidCommitmentMessage
+    );
+
+    let mut participant_bucket_bindings: Vec<(u32, usize)> =
+        Vec::with_capacity(participant_bucket_ids.len());
+    for (index, bucket_id) in participant_bucket_ids.iter().enumerate() {
+        ParticipantBucket::verify_account_info(&remaining[index], *bucket_id, program_id)?;
+        let insert_index = participant_bucket_bindings
+            .binary_search_by_key(bucket_id, |(bound_bucket_id, _)| *bound_bucket_id)
+            .unwrap_err();
+        participant_bucket_bindings.insert(insert_index, (*bucket_id, index));
+    }
+
+    let payee_bucket_index = find_bucket_account_index(
+        &participant_bucket_bindings,
+        ParticipantBucket::bucket_id_for_participant_id(payee_id),
+    )?;
+    let payee_data = remaining[payee_bucket_index].try_borrow_data()?;
+    let payee_owner = ParticipantBucket::read_slot_owner_from_data(payee_data.as_ref(), payee_id)?;
+    drop(payee_data);
+
+    let mut next_channel_bucket_account_index = participant_bucket_ids.len();
+    for commitment in &parsed_commitments {
+        let parsed = &commitment.parsed;
+        let submitter_ok = submitter == payee_owner
             || parsed
                 .authorized_settler
                 .map(|settler| settler == submitter)
                 .unwrap_or(false);
         require!(submitter_ok, VaultError::UnauthorizedSettler);
-
-        let payer_index = i * 2;
-        let channel_index = (i * 2) + 1;
-        let payer_info = &remaining[payer_index];
-        let channel_info = &remaining[channel_index];
-
-        require!(
-            payer_info.owner == program_id,
-            VaultError::ParticipantNotFound
-        );
-        ParticipantAccount::verify_pda(payer_info, program_id)?;
-        require!(
-            channel_info.owner == program_id,
-            VaultError::ChannelNotInitialized
-        );
-
-        let payer_data = payer_info.try_borrow_data()?;
-        let payer_account = ParticipantAccount::try_deserialize(&mut payer_data.as_ref())?;
-        drop(payer_data);
-
-        let channel_data = channel_info.try_borrow_data()?;
-        let channel = ChannelState::try_deserialize(&mut channel_data.as_ref())?;
-        drop(channel_data);
-        ChannelState::verify_expected_pda(
-            channel_info.key,
-            channel.payer_id,
-            channel.payee_id,
-            channel.token_id,
-            channel.bump,
-            program_id,
+        insert_unique_sorted_u64(
+            &mut seen_lane_keys,
+            lane_key(parsed.payer_id, parsed.payee_id),
         )?;
 
+        let (lower_id, higher_id, lane_selector) =
+            ChannelBucket::canonicalize(parsed.payer_id, parsed.payee_id)?;
+        let channel_bucket_id = ChannelBucket::bucket_id_for_pair(lower_id, higher_id)?;
+        let channel_bucket_index = if let Some((_, index)) = channel_bucket_bindings
+            .binary_search_by_key(&channel_bucket_id, |(bound_bucket_id, _)| *bound_bucket_id)
+            .ok()
+            .map(|binding_index| channel_bucket_bindings[binding_index])
+        {
+            index
+        } else {
+            require!(
+                next_channel_bucket_account_index < remaining.len(),
+                VaultError::InvalidCommitmentMessage
+            );
+            let channel_info = &remaining[next_channel_bucket_account_index];
+            ChannelBucket::verify_account_info(
+                channel_info,
+                parsed.token_id,
+                channel_bucket_id,
+                program_id,
+            )?;
+            let insert_index = channel_bucket_bindings
+                .binary_search_by_key(&channel_bucket_id, |(bound_bucket_id, _)| *bound_bucket_id)
+                .unwrap_err();
+            channel_bucket_bindings.insert(
+                insert_index,
+                (channel_bucket_id, next_channel_bucket_account_index),
+            );
+            next_channel_bucket_account_index += 1;
+            next_channel_bucket_account_index - 1
+        };
+
+        let channel_data = remaining[channel_bucket_index].try_borrow_data()?;
+        let lane = ChannelBucket::read_lane_commitment_for_selector_from_data(
+            channel_data.as_ref(),
+            lower_id,
+            higher_id,
+            lane_selector,
+        )?;
         require!(
-            signer_pubkey == channel.authorized_signer,
+            commitment.signer_pubkey == lane.authorized_signer,
             VaultError::InvalidSignature
         );
         require!(
-            !seen_channel_accounts.contains(channel_info.key),
-            VaultError::InvalidCommitmentMessage
-        );
-        seen_channel_accounts.push(*channel_info.key);
-        require!(
-            channel.payer_id == parsed.payer_id,
-            VaultError::AccountIdMismatch
-        );
-        require!(
-            channel.payee_id == parsed.payee_id,
-            VaultError::AccountIdMismatch
-        );
-        require!(
-            channel.token_id == parsed.token_id,
-            VaultError::InvalidTokenMint
-        );
-        require!(
-            channel.payee_id == payee.participant_id,
-            VaultError::AccountIdMismatch
-        );
-        require!(
-            channel.payer_id == payer_account.participant_id,
-            VaultError::AccountIdMismatch
-        );
-        require!(
-            parsed.committed_amount > channel.settled_cumulative,
+            parsed.committed_amount > lane.settled_cumulative,
             VaultError::CommitmentAmountMustIncrease
         );
-
         let amount = parsed
             .committed_amount
-            .checked_sub(channel.settled_cumulative)
+            .checked_sub(lane.settled_cumulative)
             .ok_or(error!(VaultError::MathOverflow))?;
-        let total_available = channel
-            .locked_balance
-            .checked_add(payer_account.get_token_total_balance(parsed.token_id)?)
+        let lane_locked_balance = lane.locked_balance;
+        let locked_consumed = lane_locked_balance.min(amount);
+        drop(channel_data);
+
+        let payer_bucket_id = ParticipantBucket::bucket_id_for_participant_id(parsed.payer_id);
+        let payer_bucket_index =
+            find_bucket_account_index(&participant_bucket_bindings, payer_bucket_id)?;
+        let payer_data = remaining[payer_bucket_index].try_borrow_data()?;
+        let total_available = lane_locked_balance
+            .checked_add(ParticipantBucket::read_token_total_balance_from_data(
+                payer_data.as_ref(),
+                parsed.payer_id,
+                parsed.token_id,
+            )?)
             .ok_or(error!(VaultError::MathOverflow))?;
+        drop(payer_data);
         require!(total_available >= amount, VaultError::InsufficientBalance);
 
-        let locked_consumed = channel.locked_balance.min(amount);
         let shared_debit = amount
             .checked_sub(locked_consumed)
             .ok_or(error!(VaultError::MathOverflow))?;
-
         total = total
             .checked_add(amount)
             .ok_or(error!(VaultError::MathOverflow))?;
-
         add_balance_delta(
             &mut balance_deltas,
             parsed.payer_id,
@@ -163,49 +231,41 @@ pub fn handler<'info>(
         )?;
         add_balance_delta(&mut balance_deltas, parsed.payee_id, amount as i128)?;
 
-        bundle_entries.push(BundleEntry {
-            payer_id: parsed.payer_id,
-            payer_index,
-            channel_index,
-            committed_amount: parsed.committed_amount,
+        let mut channel_data = remaining[channel_bucket_index].try_borrow_mut_data()?;
+        ChannelBucket::apply_lane_settlement_at_offset_in_data(
+            channel_data.as_mut(),
+            lane.lane_offset,
+            parsed.committed_amount,
             locked_consumed,
-        });
+        )?;
+        processed_channel_count = processed_channel_count
+            .checked_add(1)
+            .ok_or(error!(VaultError::MathOverflow))?;
     }
 
-    let batch_token_id = token_id.ok_or(error!(VaultError::InvalidCommitmentMessage))?;
-    let payee_id = payee.participant_id;
+    require!(
+        next_channel_bucket_account_index == remaining.len(),
+        VaultError::InvalidCommitmentMessage
+    );
 
-    for entry in &bundle_entries {
-        let mut payer_data = remaining[entry.payer_index].try_borrow_mut_data()?;
-        let mut payer_account = ParticipantAccount::try_deserialize(&mut payer_data.as_ref())?;
-
-        let mut channel_data = remaining[entry.channel_index].try_borrow_mut_data()?;
-        let mut channel = ChannelState::try_deserialize(&mut channel_data.as_ref())?;
-
-        channel.settled_cumulative = entry.committed_amount;
-        channel.locked_balance -= entry.locked_consumed;
-        if entry.payer_id != payee_id {
-            apply_balance_delta(
-                &mut payer_account,
-                batch_token_id,
-                find_balance_delta(&balance_deltas, entry.payer_id),
-            )?;
+    for (bucket_index, bucket_id) in participant_bucket_ids.iter().enumerate() {
+        let mut participant_data = remaining[bucket_index].try_borrow_mut_data()?;
+        for delta in &balance_deltas {
+            if ParticipantBucket::bucket_id_for_participant_id(delta.participant_id) == *bucket_id {
+                ParticipantBucket::apply_token_delta_in_data(
+                    participant_data.as_mut(),
+                    delta.participant_id,
+                    batch_token_id,
+                    delta.amount_delta,
+                )?;
+            }
         }
-
-        payer_account.try_serialize(&mut payer_data.as_mut())?;
-        channel.try_serialize(&mut channel_data.as_mut())?;
     }
-
-    apply_balance_delta(
-        payee,
-        batch_token_id,
-        find_balance_delta(&balance_deltas, payee_id),
-    )?;
 
     emit!(CommitmentBundleSettled {
-        payee_id: payee.participant_id,
+        payee_id,
         token_id: batch_token_id,
-        channel_count: bundle_entries.len() as u16,
+        channel_count: processed_channel_count,
         total,
     });
 
@@ -227,9 +287,6 @@ pub struct SettleCommitmentBundle<'info> {
     pub global_config: Account<'info, GlobalConfig>,
 
     #[account(mut)]
-    pub payee_account: Account<'info, ParticipantAccount>,
-
-    #[account(mut)]
     pub submitter: Signer<'info>,
 
     /// CHECK: Instructions sysvar for Ed25519 and CPI verification
@@ -240,6 +297,7 @@ pub struct SettleCommitmentBundle<'info> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::balance_deltas::find_balance_delta;
     use proptest::prelude::*;
 
     #[derive(Clone, Debug)]

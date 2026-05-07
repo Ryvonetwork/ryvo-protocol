@@ -1,12 +1,9 @@
 use anchor_lang::prelude::*;
 
-use crate::balance_deltas::{
-    add_balance_delta, apply_balance_delta, find_balance_delta, ParticipantBalanceDelta,
-};
 use crate::ed25519;
 use crate::errors::VaultError;
 use crate::events::IndividualSettled;
-use crate::state::{ChannelState, GlobalConfig, ParticipantAccount, TokenRegistry};
+use crate::state::{ChannelBucket, GlobalConfig, ParticipantBucket, TokenRegistry};
 
 pub const COMMITMENT_MESSAGE_KIND: u8 = 0x01;
 pub const COMMITMENT_MESSAGE_VERSION: u8 = 0x05;
@@ -130,11 +127,6 @@ pub fn handler(ctx: Context<SettleIndividual>) -> Result<()> {
     let offsets = ed25519::parse_ed25519_offsets(&ix_data, 0)?;
 
     let signer_pubkey = ed25519::extract_pubkey(&ix_data, &offsets)?;
-    require!(
-        signer_pubkey == ctx.accounts.channel_state.authorized_signer,
-        VaultError::InvalidSignature
-    );
-
     let message = ed25519::extract_message(&ix_data, &offsets)?;
     let parsed = parse_commitment_message(&message, &ctx.accounts.global_config)?;
 
@@ -143,53 +135,83 @@ pub fn handler(ctx: Context<SettleIndividual>) -> Result<()> {
         .find_token(parsed.token_id)
         .ok_or(VaultError::TokenNotFound)?;
 
-    let channel = &mut ctx.accounts.channel_state;
+    let payer_bucket_id = ParticipantBucket::bucket_id_for_participant_id(parsed.payer_id);
+    let payee_bucket_id = ParticipantBucket::bucket_id_for_participant_id(parsed.payee_id);
+    let mut participant_bucket_ids = vec![payer_bucket_id];
+    if payee_bucket_id != payer_bucket_id {
+        participant_bucket_ids.push(payee_bucket_id);
+    }
+    let (lower_id, higher_id, lane_selector) =
+        ChannelBucket::canonicalize(parsed.payer_id, parsed.payee_id)?;
+    let channel_bucket_id = ChannelBucket::bucket_id_for_pair(lower_id, higher_id)?;
     require!(
-        channel.token_id == parsed.token_id,
-        VaultError::InvalidTokenMint
-    );
-    require!(
-        channel.payer_id == parsed.payer_id,
-        VaultError::AccountIdMismatch
-    );
-    require!(
-        channel.payee_id == parsed.payee_id,
-        VaultError::AccountIdMismatch
-    );
-    require!(
-        channel.payer_id == ctx.accounts.payer_account.participant_id,
-        VaultError::AccountIdMismatch
-    );
-    require!(
-        channel.payee_id == ctx.accounts.payee_account.participant_id,
-        VaultError::AccountIdMismatch
+        ctx.remaining_accounts.len() == participant_bucket_ids.len() + 1,
+        VaultError::InvalidCommitmentMessage
     );
 
-    let submitter_ok = ctx.accounts.submitter.key() == ctx.accounts.payee_account.owner
+    for (index, bucket_id) in participant_bucket_ids.iter().enumerate() {
+        let info = &ctx.remaining_accounts[index];
+        ParticipantBucket::verify_account_info(info, *bucket_id, ctx.program_id)?;
+    }
+    let channel_info = &ctx.remaining_accounts[participant_bucket_ids.len()];
+    ChannelBucket::verify_account_info(
+        channel_info,
+        parsed.token_id,
+        channel_bucket_id,
+        ctx.program_id,
+    )?;
+    let channel_data = channel_info.try_borrow_data()?;
+    let lane = ChannelBucket::read_lane_commitment_for_selector_from_data(
+        channel_data.as_ref(),
+        lower_id,
+        higher_id,
+        lane_selector,
+    )?;
+    require!(
+        signer_pubkey == lane.authorized_signer,
+        VaultError::InvalidSignature
+    );
+    drop(channel_data);
+
+    let payee_bucket_index = participant_bucket_ids
+        .iter()
+        .position(|bucket_id| *bucket_id == payee_bucket_id)
+        .ok_or(error!(VaultError::ParticipantNotFound))?;
+    let payee_data = ctx.remaining_accounts[payee_bucket_index].try_borrow_data()?;
+    let payee_owner =
+        ParticipantBucket::read_slot_owner_from_data(payee_data.as_ref(), parsed.payee_id)?;
+
+    let submitter_ok = ctx.accounts.submitter.key() == payee_owner
         || parsed
             .authorized_settler
             .map(|settler| settler == ctx.accounts.submitter.key())
             .unwrap_or(false);
     require!(submitter_ok, VaultError::UnauthorizedSettler);
-    require!(
-        ctx.remaining_accounts.is_empty(),
-        VaultError::InvalidCommitmentMessage
-    );
+    drop(payee_data);
 
     require!(
-        parsed.committed_amount > channel.settled_cumulative,
+        parsed.committed_amount > lane.settled_cumulative,
         VaultError::CommitmentAmountMustIncrease
     );
 
     let amount = parsed
         .committed_amount
-        .checked_sub(channel.settled_cumulative)
+        .checked_sub(lane.settled_cumulative)
         .ok_or(error!(VaultError::MathOverflow))?;
     let total_debit = amount;
 
-    let payer = &mut ctx.accounts.payer_account;
-    let payer_token_balance = payer.get_token_total_balance(parsed.token_id)?;
-    let total_available = channel
+    let payer_bucket_index = participant_bucket_ids
+        .iter()
+        .position(|bucket_id| *bucket_id == payer_bucket_id)
+        .ok_or(error!(VaultError::ParticipantNotFound))?;
+    let payer_data = ctx.remaining_accounts[payer_bucket_index].try_borrow_data()?;
+    let payer_token_balance = ParticipantBucket::read_token_total_balance_from_data(
+        payer_data.as_ref(),
+        parsed.payer_id,
+        parsed.token_id,
+    )?;
+    drop(payer_data);
+    let total_available = lane
         .locked_balance
         .checked_add(payer_token_balance)
         .ok_or(error!(VaultError::MathOverflow))?;
@@ -198,38 +220,46 @@ pub fn handler(ctx: Context<SettleIndividual>) -> Result<()> {
         VaultError::InsufficientBalance
     );
 
-    let locked_consumed = channel.locked_balance.min(amount);
+    let locked_consumed = lane.locked_balance.min(amount);
     let shared_debit = amount
         .checked_sub(locked_consumed)
         .ok_or(error!(VaultError::MathOverflow))?;
     let from_locked = locked_consumed > 0;
 
-    channel.settled_cumulative = parsed.committed_amount;
-    channel.locked_balance -= locked_consumed;
-
-    let mut balance_deltas: Vec<ParticipantBalanceDelta> = Vec::with_capacity(2);
-    add_balance_delta(
-        &mut balance_deltas,
-        channel.payer_id,
-        -(shared_debit as i128),
+    let mut channel_data = channel_info.try_borrow_mut_data()?;
+    ChannelBucket::apply_lane_settlement_at_offset_in_data(
+        channel_data.as_mut(),
+        lane.lane_offset,
+        parsed.committed_amount,
+        locked_consumed,
     )?;
-    add_balance_delta(&mut balance_deltas, channel.payee_id, amount as i128)?;
 
-    let payer_delta = find_balance_delta(&balance_deltas, channel.payer_id);
-    apply_balance_delta(payer, parsed.token_id, payer_delta)?;
+    let payer_delta = -(shared_debit as i128);
+    let payee_delta = amount as i128;
 
-    if channel.payee_id != channel.payer_id {
-        let payee_delta = find_balance_delta(&balance_deltas, channel.payee_id);
-        apply_balance_delta(
-            &mut ctx.accounts.payee_account,
-            parsed.token_id,
-            payee_delta,
-        )?;
+    for (bucket_index, bucket_id) in participant_bucket_ids.iter().enumerate() {
+        let mut participant_data = ctx.remaining_accounts[bucket_index].try_borrow_mut_data()?;
+        if *bucket_id == payer_bucket_id {
+            ParticipantBucket::apply_token_delta_in_data(
+                participant_data.as_mut(),
+                parsed.payer_id,
+                parsed.token_id,
+                payer_delta,
+            )?;
+        }
+        if *bucket_id == payee_bucket_id {
+            ParticipantBucket::apply_token_delta_in_data(
+                participant_data.as_mut(),
+                parsed.payee_id,
+                parsed.token_id,
+                payee_delta,
+            )?;
+        }
     }
 
     emit!(IndividualSettled {
-        payer_id: channel.payer_id,
-        payee_id: channel.payee_id,
+        payer_id: parsed.payer_id,
+        payee_id: parsed.payee_id,
         token_id: parsed.token_id,
         amount,
         committed_amount: parsed.committed_amount,
@@ -254,24 +284,6 @@ pub struct SettleIndividual<'info> {
     pub global_config: Account<'info, GlobalConfig>,
 
     #[account(mut)]
-    pub payer_account: Account<'info, ParticipantAccount>,
-
-    #[account(mut)]
-    pub payee_account: Account<'info, ParticipantAccount>,
-
-    #[account(
-        mut,
-        seeds = [
-            ChannelState::SEED_PREFIX,
-            payer_account.participant_id.to_le_bytes().as_ref(),
-            payee_account.participant_id.to_le_bytes().as_ref(),
-            channel_state.token_id.to_le_bytes().as_ref(),
-        ],
-        bump,
-    )]
-    pub channel_state: Account<'info, ChannelState>,
-
-    #[account(mut)]
     pub submitter: Signer<'info>,
 
     /// CHECK: Instructions sysvar for Ed25519 and CPI verification
@@ -291,13 +303,14 @@ mod tests {
             fee_recipient: Pubkey::default(),
             fee_bps: 0,
             withdrawal_timelock_seconds: 0,
+            channel_unlock_timelock_seconds: 0,
             registration_fee_lamports: 0,
             next_participant_id: 1,
             bump: 0,
             chain_id: GlobalConfig::DEVNET_CHAIN_ID,
             message_domain,
             pending_authority: Pubkey::default(),
-            _reserved: [0u8; 14],
+            _reserved: [0u8; 6],
         }
     }
 

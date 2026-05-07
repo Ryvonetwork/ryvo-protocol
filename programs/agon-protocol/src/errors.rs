@@ -19,7 +19,7 @@ pub enum VaultError {
     #[msg("No withdrawal is currently pending")]
     NoWithdrawalPending,
     /// Retriable: Wait until unlock_at.
-    #[msg("Withdrawal timelock has not yet expired")]
+    #[msg("Unlock timelock has not yet expired")]
     WithdrawalLocked,
     /// Permanent: Zero address or invalid token account.
     #[msg("Invalid withdrawal destination address")]
@@ -70,6 +70,20 @@ pub enum VaultError {
     InvalidMessageDomain,
     #[msg("Ed25519 signature verification failed")]
     InvalidSignature,
+    #[msg("Invalid BLS public key")]
+    InvalidBlsPublicKey,
+    #[msg("Invalid BLS aggregate signature")]
+    InvalidBlsSignature,
+    #[msg("Invalid BLS proof of possession")]
+    InvalidBlsProofOfPossession,
+    #[msg("Participant inline BLS key is not registered")]
+    ParticipantBlsKeyNotFound,
+    #[msg("Participant already has a registered BLS key")]
+    ParticipantBlsKeyAlreadyRegistered,
+    #[msg("BLS key registration does not match the participant")]
+    AccountBlsKeyMismatch,
+    #[msg("BLS syscall failed or is unavailable on this cluster")]
+    BlsSyscallFailed,
     #[msg("CPI calls to settlement instructions are not allowed")]
     CpiNotAllowed,
     #[msg("Invalid Ed25519 instruction data")]
@@ -84,6 +98,8 @@ pub enum VaultError {
     UnauthorizedSettler,
     #[msg("Payee consent is required to create this inbound channel")]
     InboundChannelConsentRequired,
+    #[msg("Counterparty consent is required for cooperative channel unlock")]
+    CounterpartyConsentRequired,
     #[msg("This participant does not accept inbound channels")]
     InboundChannelsDisabled,
     #[msg("Self-channels are not allowed")]
@@ -130,4 +146,48 @@ pub enum VaultError {
     InvalidAuthorizedSigner,
     #[msg("No authorized signer update is currently pending")]
     NoAuthorizedSignerUpdatePending,
+    #[msg("Bucket account does not match the expected bucket id or PDA")]
+    BucketAccountMismatch,
+    #[msg("Bucket slot does not match the expected logical row")]
+    BucketSlotMismatch,
+    #[msg("Bucket slot is already initialized")]
+    BucketSlotAlreadyInitialized,
+    #[msg("Bucket has no remaining free slots")]
+    BucketFull,
+    #[msg("Owner is already registered")]
+    OwnerAlreadyRegistered,
+    /// Permanent: Plain deposit/withdraw cannot operate on a yield-bearing token id.
+    /// Use `deposit_yield_bearing` / `request_withdrawal_yield_bearing` instead.
+    #[msg("Token id is yield-bearing; use the yield-bearing instruction variant")]
+    TokenIsYieldBearing,
+    /// Permanent: yield-bearing instruction was called with a plain token id.
+    #[msg("Token id is plain; use the plain deposit/withdrawal instruction")]
+    TokenIsNotYieldBearing,
+    /// Permanent: provided YieldStrategy account does not match the token id or its stored fields
+    /// (mint / reserve / share_mint / share_vault) drift from the registered config.
+    #[msg("YieldStrategy account does not match the registered token configuration")]
+    InvalidYieldStrategy,
+    /// User action: fee_recipient asked to claim more than `protocol_owed_underlying`. Wait for
+    /// more yield to accrue or claim a smaller amount.
+    #[msg("Requested protocol yield claim exceeds accrued protocol yield")]
+    InsufficientProtocolYield,
+    /// Permanent: the YieldStrategy's underlying mint does not match the mock-yield Reserve's
+    /// underlying mint.
+    #[msg("Yield-bearing underlying mint does not match the lending reserve")]
+    YieldUnderlyingMismatch,
+    /// Permanent: protocol's solvency invariant would be broken by this transaction. This should
+    /// only fire if mock-yield account state has drifted from the strategy's tracking; bug in
+    /// the protocol if it ever fires in production.
+    #[msg("Solvency invariant violated: share_vault USDC value < user_owed + protocol_owed")]
+    SolvencyInvariantBroken,
+    /// Permanent: provided yield/lending program does not match the strategy's `yield_program`.
+    #[msg("Yield program account does not match strategy.yield_program")]
+    InvalidYieldProgram,
+    /// Permanent: protocol_yield_share_bps exceeded the protocol-imposed cap.
+    #[msg("Protocol yield share bps exceeds the maximum allowed value")]
+    InvalidProtocolYieldShareBps,
+    /// Permanent: opt-in/opt-out attempted between a plain token and a yield-bearing token whose
+    /// underlying mints don't match (i.e. opting `USDT` into `agUSDC` would fail with this error).
+    #[msg("Plain token mint does not match the yield strategy's underlying mint")]
+    MismatchedYieldUnderlying,
 }

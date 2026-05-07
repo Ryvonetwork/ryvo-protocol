@@ -12,6 +12,16 @@ bootstrap_tooling_path() {
         source "$HOME/.cargo/env"
     fi
 
+    for candidate in \
+        "$HOME/.local/share/agave-v4-beta/active_release/bin" \
+        "$HOME/.local/share/solana/install/active_release/bin" \
+        "$HOME/.local/share/solana/install/releases/"*/solana-release/bin
+    do
+        if [ -d "$candidate" ] && [[ ":$PATH:" != *":$candidate:"* ]]; then
+            PATH="$candidate:$PATH"
+        fi
+    done
+
     if ! command -v node >/dev/null 2>&1; then
         LATEST_NODE=$(find "$HOME/.nvm/versions/node" -maxdepth 3 -type f -name node 2>/dev/null | sort -V | tail -1 || true)
         if [ -n "$LATEST_NODE" ]; then
@@ -23,6 +33,9 @@ bootstrap_tooling_path() {
 bootstrap_tooling_path
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/lib/rpc-env.sh"
+load_project_rpc_env "$REPO_ROOT"
 NETWORK=${1:-devnet}
 ENV_FILE="$REPO_ROOT/.env"
 
@@ -73,11 +86,12 @@ if [ $? -eq 0 ]; then
     ANCHOR_TOML="$REPO_ROOT/Anchor.toml"
     
     # We use sed to update the cluster and wallet in the [provider] section
-    sed -i "s|cluster = \".*\"|cluster = \"$NETWORK\"|" $ANCHOR_TOML
+    RPC_URL="$(resolve_project_rpc_url "$NETWORK")"
+    sed -i "s|cluster = \".*\"|cluster = \"$RPC_URL\"|" $ANCHOR_TOML
     sed -i "s|wallet = \".*\"|wallet = \"$OUT_FILE\"|" $ANCHOR_TOML
     
     echo "✅ Updated Anchor.toml:"
-    echo "  cluster = \"$NETWORK\""
+    echo "  cluster = \"$RPC_URL\""
     echo "  wallet = \"$OUT_FILE\""
     echo ""
     echo "You are now ready to run 'anchor deploy' to $NETWORK!"

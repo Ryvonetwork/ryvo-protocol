@@ -2,39 +2,69 @@ use anchor_lang::prelude::*;
 
 use crate::errors::VaultError;
 use crate::events::ChannelFundsLocked;
-use crate::state::{ChannelState, ParticipantAccount, TokenRegistry};
+use crate::state::{ChannelBucket, OwnerIndexBucket, ParticipantBucket, TokenRegistry};
 
-pub fn handler(ctx: Context<LockChannelFunds>, token_id: u16, amount: u64) -> Result<()> {
+pub fn handler(
+    ctx: Context<LockChannelFunds>,
+    token_id: u16,
+    payee_participant_id: u32,
+    amount: u64,
+) -> Result<()> {
     require!(amount > 0, VaultError::AmountMustBePositive);
-
-    let payer = &mut ctx.accounts.payer_account;
-    let channel = &mut ctx.accounts.channel_state;
-
-    // Validate token matches channel
-    require!(channel.token_id == token_id, VaultError::InvalidTokenMint);
-
-    // Check token-specific balance
-    let payer_token_balance = payer
-        .get_token_balance(token_id)
+    ctx.accounts
+        .token_registry
+        .find_token(token_id)
         .ok_or(VaultError::TokenNotFound)?;
-    require!(
-        payer_token_balance.available_balance >= amount,
-        VaultError::InsufficientBalance
-    );
 
-    // Debit from available, credit to locked
-    payer.debit_token(token_id, amount)?;
-    channel.locked_balance = channel
-        .locked_balance
-        .checked_add(amount)
-        .ok_or(error!(VaultError::MathOverflow))?;
+    let owner = ctx.accounts.owner.key();
+    let payer_id = ctx
+        .accounts
+        .owner_index_bucket
+        .participant_id_for_verified_owner(
+            &ctx.accounts.owner_index_bucket.key(),
+            &owner,
+            ctx.program_id,
+        )?;
+    ParticipantBucket::verify_account_info(
+        &ctx.accounts.payer_bucket.to_account_info(),
+        ParticipantBucket::bucket_id_for_participant_id(payer_id),
+        ctx.program_id,
+    )?;
+    let (lower_id, higher_id, _) = ChannelBucket::canonicalize(payer_id, payee_participant_id)?;
+    ChannelBucket::verify_account_info(
+        &ctx.accounts.channel_bucket.to_account_info(),
+        token_id,
+        ChannelBucket::bucket_id_for_pair(lower_id, higher_id)?,
+        ctx.program_id,
+    )?;
+
+    {
+        let payer_bucket_info = ctx.accounts.payer_bucket.to_account_info();
+        let mut payer_bucket_data = payer_bucket_info.try_borrow_mut_data()?;
+        ParticipantBucket::debit_token_available_in_data(
+            payer_bucket_data.as_mut(),
+            payer_id,
+            token_id,
+            amount,
+        )?;
+    }
+    let total_locked = {
+        let channel_bucket_info = ctx.accounts.channel_bucket.to_account_info();
+        let mut channel_bucket_data = channel_bucket_info.try_borrow_mut_data()?;
+        ChannelBucket::add_lane_locked_balance_in_data(
+            channel_bucket_data.as_mut(),
+            payer_id,
+            payee_participant_id,
+            amount,
+        )?
+    };
 
     emit!(ChannelFundsLocked {
-        payer_id: payer.participant_id,
-        payee_id: ctx.accounts.payee_account.participant_id,
+        payer_id,
+        payee_id: payee_participant_id,
         token_id,
         amount,
-        total_locked: channel.locked_balance,
+        total_locked,
     });
 
     Ok(())
@@ -48,27 +78,15 @@ pub struct LockChannelFunds<'info> {
     )]
     pub token_registry: Account<'info, TokenRegistry>,
 
-    #[account(
-        mut,
-        seeds = [ParticipantAccount::SEED_PREFIX, owner.key().as_ref()],
-        bump,
-        has_one = owner,
-    )]
-    pub payer_account: Account<'info, ParticipantAccount>,
+    /// CHECK: Verified with ParticipantBucket::verify_account_info before raw balance mutation.
+    #[account(mut)]
+    pub payer_bucket: UncheckedAccount<'info>,
 
-    pub payee_account: Account<'info, ParticipantAccount>,
+    /// CHECK: Verified with ChannelBucket::verify_account_info before raw lane mutation.
+    #[account(mut)]
+    pub channel_bucket: UncheckedAccount<'info>,
 
-    #[account(
-        mut,
-        seeds = [
-            ChannelState::SEED_PREFIX,
-            payer_account.participant_id.to_le_bytes().as_ref(),
-            payee_account.participant_id.to_le_bytes().as_ref(),
-            channel_state.token_id.to_le_bytes().as_ref(), // Include token_id from account data
-        ],
-        bump,
-    )]
-    pub channel_state: Account<'info, ChannelState>,
+    pub owner_index_bucket: Account<'info, OwnerIndexBucket>,
 
     #[account(mut)]
     pub owner: Signer<'info>,

@@ -9,14 +9,14 @@ crate-type = ["cdylib", "lib"]
 name = "agon_protocol"
 
 [features]
-default = []
+default = ["custom-heap"]
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 anchor-debug = []
-custom-heap = []
+custom-heap = ["dep:solana-allocator"]
 custom-panic = []
 mainnet = []
 devnet = []
@@ -26,7 +26,10 @@ devnet = []
 anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
 anchor-spl = "0.32.1"
 bytemuck = { version = "1.14", features = ["derive"] }
+hex-literal = "0.4"
 sha2 = "0.10"
+solana-allocator = { version = "0.1.2", optional = true }
+mock-yield = { path = "../mock-yield", features = ["cpi"] }
 
 [dev-dependencies]
 proptest = "1.6"

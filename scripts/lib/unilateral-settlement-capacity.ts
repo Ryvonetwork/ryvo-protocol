@@ -122,9 +122,9 @@ function createSyntheticEd25519Instruction(params: {
 function createIndividualSettlementInstruction(
   programId: PublicKey,
   submitter: PublicKey,
-  payerAccount: PublicKey,
-  payeeAccount: PublicKey,
-  channelAccount: PublicKey
+  payerBucket: PublicKey,
+  payeeBucket: PublicKey,
+  channelBucketAccount: PublicKey
 ): TransactionInstruction {
   return new TransactionInstruction({
     programId,
@@ -139,9 +139,9 @@ function createIndividualSettlementInstruction(
         isSigner: false,
         isWritable: false,
       },
-      { pubkey: payerAccount, isSigner: false, isWritable: true },
-      { pubkey: payeeAccount, isSigner: false, isWritable: true },
-      { pubkey: channelAccount, isSigner: false, isWritable: true },
+      { pubkey: payerBucket, isSigner: false, isWritable: true },
+      { pubkey: payeeBucket, isSigner: false, isWritable: true },
+      { pubkey: channelBucketAccount, isSigner: false, isWritable: true },
       { pubkey: submitter, isSigner: true, isWritable: true },
       {
         pubkey: SYSVAR_INSTRUCTIONS_PUBKEY,
@@ -156,9 +156,9 @@ function createIndividualSettlementInstruction(
 function createBundleSettlementInstruction(
   programId: PublicKey,
   submitter: PublicKey,
-  payeeAccount: PublicKey,
-  payerAccounts: PublicKey[],
-  channelAccounts: PublicKey[]
+  payeeBucket: PublicKey,
+  payerBucketAccounts: PublicKey[],
+  channelBucketAccounts: PublicKey[]
 ): TransactionInstruction {
   return new TransactionInstruction({
     programId,
@@ -173,19 +173,19 @@ function createBundleSettlementInstruction(
         isSigner: false,
         isWritable: false,
       },
-      { pubkey: payeeAccount, isSigner: false, isWritable: true },
+      { pubkey: payeeBucket, isSigner: false, isWritable: true },
       { pubkey: submitter, isSigner: true, isWritable: true },
       {
         pubkey: SYSVAR_INSTRUCTIONS_PUBKEY,
         isSigner: false,
         isWritable: false,
       },
-      ...payerAccounts.map((pubkey) => ({
+      ...payerBucketAccounts.map((pubkey) => ({
         pubkey,
         isSigner: false,
         isWritable: true,
       })),
-      ...channelAccounts.map((pubkey) => ({
+      ...channelBucketAccounts.map((pubkey) => ({
         pubkey,
         isSigner: false,
         isWritable: true,
@@ -197,9 +197,9 @@ function createBundleSettlementInstruction(
 
 function buildBundleLookupTable(
   programId: PublicKey,
-  payeeAccount: PublicKey,
-  payerAccounts: PublicKey[],
-  channelAccounts: PublicKey[]
+  payeeBucket: PublicKey,
+  payerBucketAccounts: PublicKey[],
+  channelBucketAccounts: PublicKey[]
 ): AddressLookupTableAccount {
   return new AddressLookupTableAccount({
     key: uniquePublicKey(8_000),
@@ -212,9 +212,9 @@ function buildBundleLookupTable(
         deriveProgramAddress(programId, TOKEN_REGISTRY_SEED),
         deriveProgramAddress(programId, GLOBAL_CONFIG_SEED),
         SYSVAR_INSTRUCTIONS_PUBKEY,
-        payeeAccount,
-        ...payerAccounts,
-        ...channelAccounts,
+        payeeBucket,
+        ...payerBucketAccounts,
+        ...channelBucketAccounts,
       ],
     },
   });
@@ -227,9 +227,9 @@ export function measureIndividualSettlementCapacity(params: {
 }): IndividualSettlementCapacityMeasurement {
   const packetDataSize = params.packetDataSize ?? LEGACY_PACKET_DATA_SIZE;
   const submitter = Keypair.generate();
-  const payerAccount = uniquePublicKey(1_000);
-  const payeeAccount = uniquePublicKey(1_001);
-  const channelAccount = uniquePublicKey(1_002);
+  const payerBucket = uniquePublicKey(1_000);
+  const payeeBucket = uniquePublicKey(1_001);
+  const channelBucketAccount = uniquePublicKey(1_002);
 
   const ed25519Ix = createSyntheticEd25519Instruction({
     signatureCount: 1,
@@ -239,9 +239,9 @@ export function measureIndividualSettlementCapacity(params: {
   const settleIx = createIndividualSettlementInstruction(
     params.programId,
     submitter.publicKey,
-    payerAccount,
-    payeeAccount,
-    channelAccount
+    payerBucket,
+    payeeBucket,
+    channelBucketAccount
   );
   const serializedTxBytes = estimateLegacySignedTransactionSize({
     payerKey: submitter.publicKey,
@@ -265,11 +265,11 @@ export function measureBundleSettlementCapacity(params: {
 }): BundleSettlementCapacityMeasurement {
   const packetDataSize = params.packetDataSize ?? LEGACY_PACKET_DATA_SIZE;
   const submitter = Keypair.generate();
-  const payeeAccount = uniquePublicKey(2_000);
-  const payerAccounts = Array.from({ length: params.entryCount }, (_, index) =>
+  const payeeBucket = uniquePublicKey(2_000);
+  const payerBucketAccounts = Array.from({ length: params.entryCount }, (_, index) =>
     uniquePublicKey(2_100 + index)
   );
-  const channelAccounts = Array.from({ length: params.entryCount }, (_, index) =>
+  const channelBucketAccounts = Array.from({ length: params.entryCount }, (_, index) =>
     uniquePublicKey(3_100 + index)
   );
 
@@ -281,18 +281,18 @@ export function measureBundleSettlementCapacity(params: {
   const settleIx = createBundleSettlementInstruction(
     params.programId,
     submitter.publicKey,
-    payeeAccount,
-    payerAccounts,
-    channelAccounts
+    payeeBucket,
+    payerBucketAccounts,
+    channelBucketAccounts
   );
   const serializedTxBytes = estimateV0AltSignedTransactionSize({
     payer: submitter,
     instructions: [ed25519Ix, settleIx],
     lookupTable: buildBundleLookupTable(
       params.programId,
-      payeeAccount,
-      payerAccounts,
-      channelAccounts
+      payeeBucket,
+      payerBucketAccounts,
+      channelBucketAccounts
     ),
   });
 

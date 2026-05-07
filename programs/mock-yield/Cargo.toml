@@ -1,0 +1,28 @@
+[package]
+name = "mock-yield"
+version = "0.1.0"
+description = "Mock Save/Kamino-style lending program for Agon devnet demos. Mints cUSDC SPL shares against USDC deposits with a configurable APY."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "mock_yield"
+
+[features]
+default = ["custom-heap"]
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+anchor-debug = []
+custom-heap = ["dep:solana-allocator"]
+custom-panic = []
+
+[dependencies]
+anchor-lang = "0.32.1"
+anchor-spl = "0.32.1"
+solana-allocator = { version = "0.1.2", optional = true }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

@@ -88,7 +88,10 @@ function parseArgs(argv: string[]): CliOptions {
       args.get("deployment") ??
       path.join(repoRoot, "config", "devnet-deployment.json"),
     outputDir: args.get("output-dir") ?? path.join(repoRoot, "benchmarks"),
-    docsRoot: args.get("docs-root") ?? process.env.AGON_DOCS_ROOT ?? "/mnt/c/agon/agon/docs",
+    docsRoot:
+      args.get("docs-root") ??
+      process.env.AGON_DOCS_ROOT ??
+      "/mnt/c/agon/agon/docs",
   };
 }
 
@@ -119,9 +122,9 @@ function tryReadCommit(repoRoot: string): string | null {
 }
 
 function renderSavingsCell(savings: BenchmarkSavings): string {
-  return `${formatRatio(savings.compressionRatio)}x / ${savings.savedTransactions.toLocaleString(
-    "en-US"
-  )} tx saved`;
+  return `${formatRatio(
+    savings.compressionRatio
+  )}x / ${savings.savedTransactions.toLocaleString("en-US")} tx saved`;
 }
 
 function createLiveSnapshot(
@@ -207,7 +210,8 @@ function createSyntheticSnapshot(
       currentTypicalSerializedTxBytes: currentTypicalBundle.serializedTxBytes,
       currentTypicalSignedMessageBytes:
         currentTypicalBundle.entryCount * currentTypicalBundle.messageBytes,
-      currentConservativeLargestEntryCount: currentConservativeBundle.entryCount,
+      currentConservativeLargestEntryCount:
+        currentConservativeBundle.entryCount,
       currentConservativeSerializedTxBytes:
         currentConservativeBundle.serializedTxBytes,
       currentConservativeSignedMessageBytes:
@@ -215,22 +219,6 @@ function createSyntheticSnapshot(
         currentConservativeBundle.messageBytes,
     },
     clearing: {
-      currentV0AltCycle: {
-        participantCount: clearing.currentV0AltCycle.participantCount,
-        channelCount: clearing.currentV0AltCycle.channelCount,
-        serializedTxBytes: clearing.currentV0AltCycle.serializedTxBytes,
-        messageBytes: clearing.currentV0AltCycle.messageBytes,
-        authEnvelopeBytes: clearing.currentV0AltCycle.authEnvelopeBytes,
-        remainingBytes: clearing.currentV0AltCycle.remainingBytes,
-      },
-      currentV0AltOverall: {
-        participantCount: clearing.currentV0AltOverall.participantCount,
-        channelCount: clearing.currentV0AltOverall.channelCount,
-        serializedTxBytes: clearing.currentV0AltOverall.serializedTxBytes,
-        messageBytes: clearing.currentV0AltOverall.messageBytes,
-        authEnvelopeBytes: clearing.currentV0AltOverall.authEnvelopeBytes,
-        remainingBytes: clearing.currentV0AltOverall.remainingBytes,
-      },
       blsV0AltCycle: {
         participantCount: clearing.blsV0AltCycle.participantCount,
         channelCount: clearing.blsV0AltCycle.channelCount,
@@ -238,6 +226,10 @@ function createSyntheticSnapshot(
         messageBytes: clearing.blsV0AltCycle.messageBytes,
         authEnvelopeBytes: clearing.blsV0AltCycle.authEnvelopeBytes,
         remainingBytes: clearing.blsV0AltCycle.remainingBytes,
+        participantBucketCount: clearing.blsV0AltCycle.participantBucketCount,
+        channelBucketCount: clearing.blsV0AltCycle.channelBucketCount,
+        dynamicWritableAccountCount:
+          clearing.blsV0AltCycle.dynamicWritableAccountCount,
       },
       blsV0AltOverall: {
         participantCount: clearing.blsV0AltOverall.participantCount,
@@ -246,6 +238,10 @@ function createSyntheticSnapshot(
         messageBytes: clearing.blsV0AltOverall.messageBytes,
         authEnvelopeBytes: clearing.blsV0AltOverall.authEnvelopeBytes,
         remainingBytes: clearing.blsV0AltOverall.remainingBytes,
+        participantBucketCount: clearing.blsV0AltOverall.participantBucketCount,
+        channelBucketCount: clearing.blsV0AltOverall.channelBucketCount,
+        dynamicWritableAccountCount:
+          clearing.blsV0AltOverall.dynamicWritableAccountCount,
       },
     },
   };
@@ -276,7 +272,9 @@ title: "Generated Live Devnet Benchmarks"
 description: "Generated from the latest protocol-only Agon devnet demo run."
 ---
 
-The table below is generated from the latest committed live demo snapshot for program \`${snapshot.programId}\` on \`${snapshot.cluster}\`.
+The table below is generated from the latest committed live demo snapshot for program \`${
+    snapshot.programId
+  }\` on \`${snapshot.cluster}\`.
 
 ${renderMarkdownTable(
   [
@@ -299,13 +297,17 @@ ${renderMarkdownTable(["Scenario", "Explorer"], explorerRows)}
 `;
 }
 
-function renderSyntheticBenchmarkPage(snapshot: SyntheticBenchmarkSnapshot): string {
+function renderSyntheticBenchmarkPage(
+  snapshot: SyntheticBenchmarkSnapshot
+): string {
   return `---
 title: "Generated Synthetic Capacity Benchmarks"
-description: "Deterministic capacity snapshots for Agon V4 settlement paths."
+description: "Deterministic capacity snapshots for Agon bucketed BLS settlement paths."
 ---
 
-These tables are generated from the deterministic sizing scripts at commit \`${snapshot.commit ?? "unknown"}\`.
+These tables are generated from the deterministic sizing scripts at commit \`${
+    snapshot.commit ?? "unknown"
+  }\`.
 
 ## Unilateral Commitments
 
@@ -322,7 +324,8 @@ ${renderMarkdownTable(
       "Current v4 typical unilateral commitment",
       snapshot.unilateral.currentTypicalMessageBytes,
       snapshot.unilateral.currentTypicalSerializedTxBytes,
-      snapshot.packetDataSize - snapshot.unilateral.currentTypicalSerializedTxBytes,
+      snapshot.packetDataSize -
+        snapshot.unilateral.currentTypicalSerializedTxBytes,
     ],
     [
       "Current v4 conservative unilateral commitment",
@@ -366,6 +369,7 @@ ${renderMarkdownTable(
     "Mode",
     "Participants",
     "Channels",
+    "Bucket Locks",
     "Serialized Tx Bytes",
     "Message Bytes",
     "Auth Envelope Bytes",
@@ -373,36 +377,20 @@ ${renderMarkdownTable(
   ],
   [
     [
-      "Current v0 + ALT balanced round",
-      snapshot.clearing.currentV0AltCycle.participantCount,
-      snapshot.clearing.currentV0AltCycle.channelCount,
-      snapshot.clearing.currentV0AltCycle.serializedTxBytes,
-      snapshot.clearing.currentV0AltCycle.messageBytes,
-      snapshot.clearing.currentV0AltCycle.authEnvelopeBytes,
-      snapshot.clearing.currentV0AltCycle.remainingBytes,
-    ],
-    [
-      "Current v0 + ALT overall fit",
-      snapshot.clearing.currentV0AltOverall.participantCount,
-      snapshot.clearing.currentV0AltOverall.channelCount,
-      snapshot.clearing.currentV0AltOverall.serializedTxBytes,
-      snapshot.clearing.currentV0AltOverall.messageBytes,
-      snapshot.clearing.currentV0AltOverall.authEnvelopeBytes,
-      snapshot.clearing.currentV0AltOverall.remainingBytes,
-    ],
-    [
-      "Hypothetical BLS v0 + ALT balanced round",
+      "BLS v0 + ALT balanced round",
       snapshot.clearing.blsV0AltCycle.participantCount,
       snapshot.clearing.blsV0AltCycle.channelCount,
+      `${snapshot.clearing.blsV0AltCycle.dynamicWritableAccountCount} (${snapshot.clearing.blsV0AltCycle.participantBucketCount} PB + ${snapshot.clearing.blsV0AltCycle.channelBucketCount} CB)`,
       snapshot.clearing.blsV0AltCycle.serializedTxBytes,
       snapshot.clearing.blsV0AltCycle.messageBytes,
       snapshot.clearing.blsV0AltCycle.authEnvelopeBytes,
       snapshot.clearing.blsV0AltCycle.remainingBytes,
     ],
     [
-      "Hypothetical BLS v0 + ALT overall fit",
+      "BLS v0 + ALT overall fit",
       snapshot.clearing.blsV0AltOverall.participantCount,
       snapshot.clearing.blsV0AltOverall.channelCount,
+      `${snapshot.clearing.blsV0AltOverall.dynamicWritableAccountCount} (${snapshot.clearing.blsV0AltOverall.participantBucketCount} PB + ${snapshot.clearing.blsV0AltOverall.channelBucketCount} CB)`,
       snapshot.clearing.blsV0AltOverall.serializedTxBytes,
       snapshot.clearing.blsV0AltOverall.messageBytes,
       snapshot.clearing.blsV0AltOverall.authEnvelopeBytes,
@@ -451,7 +439,11 @@ function main(): void {
     renderLiveBenchmarkPage(liveSnapshot)
   );
   writeTextFile(
-    path.join(options.docsRoot, "benchmarks", "generated-synthetic-capacity.mdx"),
+    path.join(
+      options.docsRoot,
+      "benchmarks",
+      "generated-synthetic-capacity.mdx"
+    ),
     renderSyntheticBenchmarkPage(syntheticSnapshot)
   );
 }

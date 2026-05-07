@@ -1,33 +1,35 @@
 use anchor_lang::prelude::*;
 
-use crate::errors::VaultError;
 use crate::events::WithdrawalCancelled;
-use crate::state::ParticipantAccount;
+use crate::state::{OwnerIndexBucket, ParticipantBucket};
 
 pub fn handler(ctx: Context<CancelWithdrawal>, token_id: u16) -> Result<()> {
-    let participant = &mut ctx.accounts.participant_account;
-
-    // Get token balance and validate withdrawal is pending
-    let token_balance = participant.get_token_balance_mut(token_id)?;
-
-    require!(
-        token_balance.withdrawal_unlock_at != 0,
-        VaultError::NoWithdrawalPending
-    );
-
-    let amount_returned = token_balance.withdrawing_balance;
-
-    // Move withdrawing back to available
-    token_balance.available_balance = token_balance
-        .available_balance
-        .checked_add(token_balance.withdrawing_balance)
-        .ok_or(error!(VaultError::MathOverflow))?;
-    token_balance.withdrawing_balance = 0;
-    token_balance.withdrawal_unlock_at = 0;
-    token_balance.withdrawal_destination = Pubkey::default();
+    let owner = ctx.accounts.owner.key();
+    let participant_id = ctx
+        .accounts
+        .owner_index_bucket
+        .participant_id_for_verified_owner(
+            &ctx.accounts.owner_index_bucket.key(),
+            &owner,
+            ctx.program_id,
+        )?;
+    ParticipantBucket::verify_account_info(
+        &ctx.accounts.participant_bucket.to_account_info(),
+        ParticipantBucket::bucket_id_for_participant_id(participant_id),
+        ctx.program_id,
+    )?;
+    let amount_returned = {
+        let participant_bucket_info = ctx.accounts.participant_bucket.to_account_info();
+        let mut participant_bucket_data = participant_bucket_info.try_borrow_mut_data()?;
+        ParticipantBucket::cancel_token_withdrawal_in_data(
+            participant_bucket_data.as_mut(),
+            participant_id,
+            token_id,
+        )?
+    };
 
     emit!(WithdrawalCancelled {
-        participant_id: participant.participant_id,
+        participant_id,
         token_id,
         amount_returned,
     });
@@ -37,13 +39,11 @@ pub fn handler(ctx: Context<CancelWithdrawal>, token_id: u16) -> Result<()> {
 
 #[derive(Accounts)]
 pub struct CancelWithdrawal<'info> {
-    #[account(
-        mut,
-        seeds = [ParticipantAccount::SEED_PREFIX, owner.key().as_ref()],
-        bump,
-        has_one = owner,
-    )]
-    pub participant_account: Account<'info, ParticipantAccount>,
+    /// CHECK: Verified with ParticipantBucket::verify_account_info before raw withdrawal mutation.
+    #[account(mut)]
+    pub participant_bucket: UncheckedAccount<'info>,
+
+    pub owner_index_bucket: Account<'info, OwnerIndexBucket>,
 
     pub owner: Signer<'info>,
 }

@@ -12,6 +12,7 @@ bootstrap_tooling_path() {
 
   local candidate
   for candidate in \
+    "$HOME/.local/share/agave-v4-beta/active_release/bin" \
     "$HOME/.local/share/solana/install/active_release/bin" \
     "$HOME/.local/share/solana/install/releases/"*/solana-release/bin
   do
@@ -35,6 +36,9 @@ bootstrap_tooling_path
 
 NETWORK="devnet"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/lib/rpc-env.sh"
+load_project_rpc_env "$REPO_ROOT"
 CONFIG_FILE="${AGON_DEMO_CONFIG_FILE:-$REPO_ROOT/config/agon-protocol-demo.env}"
 LOG_DIR="$REPO_ROOT/config"
 LOG_FILE="$LOG_DIR/agon-protocol-demo-last-run.log"
@@ -57,10 +61,12 @@ if [[ -f "$CONFIG_FILE" ]]; then
   done
 fi
 
+RPC_URL="$(resolve_project_rpc_url "$NETWORK")"
+
 TOKEN_ID="${AGON_DEMO_TOKEN_ID:-1}"
 TOKEN_MINT="${AGON_DEMO_MINT:-Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr}"
 TOKEN_SYMBOL="${AGON_DEMO_SYMBOL:-USDC}"
-WALLET_COUNT="${AGON_DEMO_WALLET_COUNT:-10}"
+WALLET_COUNT="${AGON_DEMO_WALLET_COUNT:-32}"
 
 if [[ -z "$NODE_BIN" ]]; then
   echo "Node.js is required but was not found in PATH."
@@ -68,11 +74,13 @@ if [[ -z "$NODE_BIN" ]]; then
 fi
 
 export AGON_ALLOWLIST_TOKENS="[{\"id\":$TOKEN_ID,\"mint\":\"$TOKEN_MINT\",\"symbol\":\"$TOKEN_SYMBOL\"}]"
+export AGON_DEPLOY_WITH_SOLANA_CLI="${AGON_DEPLOY_WITH_SOLANA_CLI:-1}"
 
 cd "$REPO_ROOT"
 
 {
   echo "[$(date -Iseconds)] Starting Agon Protocol demo on $NETWORK"
+  echo "[$(date -Iseconds)] RPC URL: $RPC_URL"
   echo "[$(date -Iseconds)] Config file: $CONFIG_FILE"
   echo "[$(date -Iseconds)] Allowlisted token: $TOKEN_SYMBOL ($TOKEN_ID) $TOKEN_MINT"
   echo "[$(date -Iseconds)] Wallet count: $WALLET_COUNT"
@@ -80,6 +88,8 @@ cd "$REPO_ROOT"
     echo "[$(date -Iseconds)] Skipping deploy and reusing current on-chain program state"
   else
     DEPLOY_ENV=("AGON_ALLOWLIST_TOKENS=$AGON_ALLOWLIST_TOKENS")
+    DEPLOY_ENV+=("AGON_DEPLOY_WITH_SOLANA_CLI=$AGON_DEPLOY_WITH_SOLANA_CLI")
+    DEPLOY_ENV+=("AGON_RPC_URL=$RPC_URL")
     DEPLOY_ARGS=(--network="$NETWORK")
     if [[ "${AGON_DEMO_FRESH_PROGRAM_ID:-0}" == "1" ]]; then
       DEPLOY_ARGS+=(--fresh-program-id)
@@ -87,10 +97,10 @@ cd "$REPO_ROOT"
     if [[ -n "${AGON_FEE_RECIPIENT:-}" ]]; then
       DEPLOY_ENV+=("AGON_FEE_RECIPIENT=$AGON_FEE_RECIPIENT")
     fi
-    env "${DEPLOY_ENV[@]}" ./scripts/deploy.sh "${DEPLOY_ARGS[@]}"
+    env "${DEPLOY_ENV[@]}" bash ./scripts/deploy.sh "${DEPLOY_ARGS[@]}"
   fi
 
-  export ANCHOR_PROVIDER_URL="https://api.devnet.solana.com"
+  export ANCHOR_PROVIDER_URL="$RPC_URL"
   export ANCHOR_WALLET="$REPO_ROOT/keys/${NETWORK}-deployer.json"
   export AGON_FORCE_BIGINT_BUFFER_BROWSER=1
   export NODE_OPTIONS="--require $REPO_ROOT/scripts/test-runtime-setup.cjs${NODE_OPTIONS:+ $NODE_OPTIONS}"

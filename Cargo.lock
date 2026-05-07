@@ -45,8 +45,11 @@ dependencies = [
  "anchor-lang",
  "anchor-spl",
  "bytemuck",
+ "hex-literal",
+ "mock-yield",
  "proptest",
  "sha2 0.10.9",
+ "solana-allocator",
 ]
 
 [[package]]
@@ -853,6 +856,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hex-literal"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
+
+[[package]]
 name = "hmac"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1032,6 +1041,15 @@ dependencies = [
  "keccak",
  "rand_core 0.6.4",
  "zeroize",
+]
+
+[[package]]
+name = "mock-yield"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+ "solana-allocator",
 ]
 
 [[package]]
@@ -1606,6 +1624,15 @@ dependencies = [
  "solana-pubkey",
  "solana-sdk-ids",
  "solana-slot-hashes",
+]
+
+[[package]]
+name = "solana-allocator"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18e83c31c62209f12ba649834b0395760ae010a24427cde881aa0bbad5ea706e"
+dependencies = [
+ "bytemuck",
 ]
 
 [[package]]

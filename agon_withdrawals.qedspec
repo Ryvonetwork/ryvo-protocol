@@ -1,0 +1,184 @@
+// Agon withdrawal flow pilot spec
+//
+// Focused slice for QEDGen experimentation:
+// deposit -> request_withdrawal -> cancel_withdrawal | execute_withdrawal_timelocked
+//
+// The model tracks one participant and one token lane, separating physical
+// token balances from the participant's internal claim accounting.
+
+spec AgonWithdrawalsPilot
+
+program_id "DE4vmRRDu1EBj98pD9AuZmdTPFAyDChMmRoPRscze5g"
+
+const BPS_DENOMINATOR   = 10_000
+const MAX_TOKEN_DECIMALS = 20
+
+type State
+  | Active of {
+      owner                 : Pubkey,
+      wallet_balance        : U64,
+      destination_balance   : U64,
+      vault_balance         : U64,
+      fee_recipient_balance : U64,
+      available_balance     : U64,
+      withdrawing_balance   : U64,
+      withdrawal_unlock_at  : U64,
+      configured_timelock   : U64,
+      configured_fee_bps    : U16,
+      min_fee_native_units  : U64,
+      token_id              : U16,
+      token_decimals        : U8,
+      token_registered      : Bool,
+      now                   : U64,
+      physical_tokens_total : U64
+    }
+
+type Error
+  | TokenNotFound
+  | AmountMustBePositive
+  | InsufficientBalance
+  | WithdrawalAlreadyPending
+  | NoWithdrawalPending
+  | WithdrawalLocked
+  | InvalidTokenDecimals
+  | MathOverflow
+
+handler deposit (token : U16) (amount : U64) : State.Active -> State.Active {
+  auth owner
+
+  accounts {
+    owner               : signer
+    participant_account : writable
+    owner_token_account : writable, type token
+    vault_token_account : writable, type token
+    token_registry      : readonly
+  }
+
+  requires token == state.token_id else TokenNotFound
+  requires state.token_registered else TokenNotFound
+  requires amount > 0 else AmountMustBePositive
+  requires state.wallet_balance >= amount else InsufficientBalance
+  requires state.vault_balance + amount <= 18446744073709551615 else MathOverflow
+  requires state.available_balance + amount <= 18446744073709551615 else MathOverflow
+
+  effect {
+    wallet_balance    := state.wallet_balance - amount
+    vault_balance     := state.vault_balance + amount
+    available_balance := state.available_balance + amount
+  }
+}
+
+handler request_withdrawal (token : U16) (amount : U64) (destination : Pubkey) : State.Active -> State.Active {
+  auth owner
+
+  accounts {
+    owner                  : signer
+    participant_account    : writable
+    withdrawal_destination : writable, type token
+    global_config          : readonly
+    token_registry         : readonly
+  }
+
+  requires token == state.token_id else TokenNotFound
+  requires state.token_registered else TokenNotFound
+  requires amount > 0 else AmountMustBePositive
+  requires state.available_balance >= amount else InsufficientBalance
+  requires state.withdrawing_balance == 0 else WithdrawalAlreadyPending
+  requires state.now + state.configured_timelock <= 18446744073709551615 else MathOverflow
+  requires state.withdrawing_balance + amount <= 18446744073709551615 else MathOverflow
+
+  effect {
+    available_balance    := state.available_balance - amount
+    withdrawing_balance  := state.withdrawing_balance + amount
+    withdrawal_unlock_at := state.now + state.configured_timelock
+  }
+
+  ensures state.available_balance + state.withdrawing_balance
+          == old(state.available_balance) + old(state.withdrawing_balance)
+}
+
+handler cancel_withdrawal (token : U16) : State.Active -> State.Active {
+  auth owner
+
+  accounts {
+    owner               : signer
+    participant_account : writable
+  }
+
+  requires token == state.token_id else TokenNotFound
+  requires state.withdrawing_balance > 0 else NoWithdrawalPending
+  requires state.available_balance + state.withdrawing_balance <= 18446744073709551615 else MathOverflow
+
+  effect {
+    available_balance    := state.available_balance + state.withdrawing_balance
+    withdrawing_balance  := 0
+    withdrawal_unlock_at := 0
+  }
+
+  ensures state.available_balance + state.withdrawing_balance
+          == old(state.available_balance) + old(state.withdrawing_balance)
+}
+
+handler execute_withdrawal_timelocked (token : U16) : State.Active -> State.Active {
+  permissionless
+
+  accounts {
+    participant_account         : writable
+    vault_token_account         : writable, type token
+    withdrawal_destination      : writable, type token
+    fee_recipient_token_account : writable, type token
+    global_config               : readonly
+    token_registry              : readonly
+  }
+
+  requires token == state.token_id else TokenNotFound
+  requires state.token_registered else TokenNotFound
+  requires state.token_decimals <= MAX_TOKEN_DECIMALS else InvalidTokenDecimals
+  requires state.withdrawing_balance > 0 else NoWithdrawalPending
+  requires state.now >= state.withdrawal_unlock_at else WithdrawalLocked
+  requires state.vault_balance >= state.withdrawing_balance else InsufficientBalance
+  requires state.configured_fee_bps == 0 else MathOverflow
+  requires state.min_fee_native_units > 0 else MathOverflow
+  requires state.fee_recipient_balance + state.withdrawing_balance <= 18446744073709551615 else MathOverflow
+  requires state.fee_recipient_balance
+           + (let fee = mul_div_floor(state.withdrawing_balance, state.configured_fee_bps, BPS_DENOMINATOR) in fee)
+           <= 18446744073709551615 else MathOverflow
+  requires state.destination_balance
+           + (let fee = mul_div_floor(state.withdrawing_balance, state.configured_fee_bps, BPS_DENOMINATOR) in state.withdrawing_balance - fee)
+           <= 18446744073709551615 else MathOverflow
+  requires state.fee_recipient_balance + state.min_fee_native_units <= 18446744073709551615 else MathOverflow
+  requires state.destination_balance + state.withdrawing_balance - state.min_fee_native_units <= 18446744073709551615 else MathOverflow
+
+  match
+    | state.withdrawing_balance <= state.min_fee_native_units =>
+        effect {
+          vault_balance          := state.vault_balance - state.withdrawing_balance
+          fee_recipient_balance  := state.fee_recipient_balance + state.withdrawing_balance
+          withdrawing_balance    := 0
+          withdrawal_unlock_at   := 0
+        }
+    | mul_div_floor(state.withdrawing_balance, state.configured_fee_bps, BPS_DENOMINATOR) >= state.min_fee_native_units =>
+        effect {
+          vault_balance         := state.vault_balance - state.withdrawing_balance
+          fee_recipient_balance := let fee = mul_div_floor(state.withdrawing_balance, state.configured_fee_bps, BPS_DENOMINATOR) in state.fee_recipient_balance + fee
+          destination_balance   := let fee = mul_div_floor(state.withdrawing_balance, state.configured_fee_bps, BPS_DENOMINATOR) in state.destination_balance + state.withdrawing_balance - fee
+          withdrawing_balance   := 0
+          withdrawal_unlock_at  := 0
+        }
+    | _ =>
+        effect {
+          vault_balance         := state.vault_balance - state.withdrawing_balance
+          fee_recipient_balance := state.fee_recipient_balance + state.min_fee_native_units
+          destination_balance   := state.destination_balance + state.withdrawing_balance - state.min_fee_native_units
+          withdrawing_balance   := 0
+          withdrawal_unlock_at  := 0
+        }
+}
+
+property vault_backs_internal_claims :
+  state.available_balance + state.withdrawing_balance <= state.vault_balance
+  preserved_by all
+
+property no_stale_timelock :
+  state.withdrawing_balance == 0 implies state.withdrawal_unlock_at == 0
+  preserved_by all

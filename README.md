@@ -33,13 +33,13 @@ npm install
 ## Build
 
 ```bash
-anchor build
+anchor build -- --features custom-heap
 ```
 
 ## Test
 
 ```bash
-anchor test
+anchor test -- --features custom-heap
 ```
 
 Windows + WSL local validator flow:

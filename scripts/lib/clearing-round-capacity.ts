@@ -1,6 +1,5 @@
 import {
   AddressLookupTableAccount,
-  Ed25519Program,
   Keypair,
   PublicKey,
   SYSVAR_INSTRUCTIONS_PUBKEY,
@@ -8,19 +7,20 @@ import {
   TransactionInstruction,
   VersionedTransaction,
 } from "@solana/web3.js";
-import { ed25519 } from "@noble/curves/ed25519";
 import { Buffer } from "buffer";
 
 export const LEGACY_PACKET_DATA_SIZE = 1232;
-const DEFAULT_BLS_AGGREGATE_SIGNATURE_BYTES = 96;
+const DEFAULT_BLS_AGGREGATE_SIGNATURE_BYTES = 48;
 const TOKEN_REGISTRY_SEED = "token-registry";
 const GLOBAL_CONFIG_SEED = "global-config";
 const SYNTHETIC_RECENT_BLOCKHASH = "11111111111111111111111111111111";
 const SYNTHETIC_MESSAGE_DOMAIN = Buffer.from("agon-capacity-v4", "utf8");
+const PARTICIPANT_BUCKET_SLOT_COUNT = 9;
+const CHANNEL_BUCKET_SLOT_COUNT = 46;
 
 export type ClearingRoundCapacityMode =
-  | "current-ed25519"
-  | "current-ed25519-v0-alt"
+  | "bls"
+  | "bls-v0-alt"
   | "hypothetical-bls"
   | "hypothetical-bls-v0-alt";
 
@@ -32,14 +32,13 @@ export type ClearingRoundCapacityMeasurement = {
   authEnvelopeBytes: number;
   serializedTxBytes: number;
   remainingBytes: number;
+  participantBucketCount: number;
+  channelBucketCount: number;
+  dynamicWritableAccountCount: number;
   fits: boolean;
 };
 
 export type ClearingRoundCapacitySummary = {
-  currentCycle: ClearingRoundCapacityMeasurement;
-  currentOverall: ClearingRoundCapacityMeasurement;
-  currentV0AltCycle: ClearingRoundCapacityMeasurement;
-  currentV0AltOverall: ClearingRoundCapacityMeasurement;
   blsCycle: ClearingRoundCapacityMeasurement;
   blsOverall: ClearingRoundCapacityMeasurement;
   blsV0AltCycle: ClearingRoundCapacityMeasurement;
@@ -51,7 +50,6 @@ type SyntheticBlock = {
   participantId: number;
   entries: {
     payeeRef: number;
-    channelAccount: PublicKey;
   }[];
 };
 
@@ -81,8 +79,8 @@ function buildSyntheticRound(
   channelCount: number
 ): {
   submitter: Keypair;
-  participantAccounts: PublicKey[];
-  channelAccounts: PublicKey[];
+  participantBucketAccounts: PublicKey[];
+  channelBucketAccounts: PublicKey[];
   blocks: SyntheticBlock[];
 } {
   if (participantCount < 3) {
@@ -102,37 +100,62 @@ function buildSyntheticRound(
   }
 
   const submitter = Keypair.generate();
-  const participantAccounts = Array.from(
-    { length: participantCount },
-    (_, index) => uniquePublicKey(1_000 + index)
-  );
+  const participantBucketAccounts: PublicKey[] = [];
+  const participantBucketById = new Map<number, PublicKey>();
   const blocks: SyntheticBlock[] = Array.from(
     { length: participantCount },
     (_, index) => ({
       signer: Keypair.generate(),
-      participantId: index + 1,
+      participantId: index,
       entries: [],
     })
   );
+  for (const block of blocks) {
+    const bucketId = participantBucketIdForParticipantId(block.participantId);
+    if (!participantBucketById.has(bucketId)) {
+      const participantBucket = uniquePublicKey(1_000 + bucketId);
+      participantBucketById.set(bucketId, participantBucket);
+      participantBucketAccounts.push(participantBucket);
+    }
+  }
 
   const orderedPairs = buildOrderedPairs(participantCount);
-  const channelAccounts: PublicKey[] = [];
+  const channelBucketAccounts: PublicKey[] = [];
+  const channelBucketAccountById = new Map<number, PublicKey>();
   for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
     const [payerIndex, payeeIndex] = orderedPairs[channelIndex];
-    const channelAccount = uniquePublicKey(5_000 + channelIndex);
-    channelAccounts.push(channelAccount);
+    const lowerIndex = Math.min(payerIndex, payeeIndex);
+    const higherIndex = Math.max(payerIndex, payeeIndex);
+    const channelBucketId = channelBucketIdForPair(lowerIndex, higherIndex);
+    if (!channelBucketAccountById.has(channelBucketId)) {
+      const channelBucket = uniquePublicKey(5_000 + channelBucketId);
+      channelBucketAccountById.set(channelBucketId, channelBucket);
+      channelBucketAccounts.push(channelBucket);
+    }
     blocks[payerIndex].entries.push({
       payeeRef: payeeIndex,
-      channelAccount,
     });
   }
 
   return {
     submitter,
-    participantAccounts,
-    channelAccounts,
+    participantBucketAccounts,
+    channelBucketAccounts,
     blocks,
   };
+}
+
+function participantBucketIdForParticipantId(participantId: number): number {
+  return Math.floor(participantId / PARTICIPANT_BUCKET_SLOT_COUNT);
+}
+
+function channelBucketIdForPair(
+  lowerParticipantId: number,
+  higherParticipantId: number
+): number {
+  const higher = BigInt(higherParticipantId);
+  const ordinal = (higher * (higher - 1n)) / 2n + BigInt(lowerParticipantId);
+  return Number(ordinal / BigInt(CHANNEL_BUCKET_SLOT_COUNT));
 }
 
 function encodeCompactU64(value: bigint): number[] {
@@ -149,7 +172,10 @@ function encodeCompactU64(value: bigint): number[] {
   return bytes;
 }
 
-function createClearingRoundMessage(blocks: SyntheticBlock[]): Buffer {
+function createClearingRoundMessage(
+  blocks: SyntheticBlock[],
+  version = 0x04
+): Buffer {
   const dynamicParts: number[] = [];
   for (const block of blocks) {
     dynamicParts.push(...encodeCompactU64(BigInt(block.participantId)));
@@ -164,7 +190,7 @@ function createClearingRoundMessage(blocks: SyntheticBlock[]): Buffer {
   }
 
   return Buffer.concat([
-    Buffer.from([0x02, 0x04]),
+    Buffer.from([0x02, version]),
     SYNTHETIC_MESSAGE_DOMAIN,
     Buffer.from([0x01, 0x00]),
     Buffer.from([blocks.length & 0xff]),
@@ -175,8 +201,8 @@ function createClearingRoundMessage(blocks: SyntheticBlock[]): Buffer {
 function createClearingRoundInstruction(
   programId: PublicKey,
   submitter: PublicKey,
-  participantAccounts: PublicKey[],
-  channelAccounts: PublicKey[],
+  participantBucketAccounts: PublicKey[],
+  channelBucketAccounts: PublicKey[],
   dataLength: number
 ): TransactionInstruction {
   return new TransactionInstruction({
@@ -202,12 +228,12 @@ function createClearingRoundInstruction(
         isSigner: false,
         isWritable: false,
       },
-      ...participantAccounts.map((pubkey) => ({
+      ...participantBucketAccounts.map((pubkey) => ({
         pubkey,
         isSigner: false,
         isWritable: true,
       })),
-      ...channelAccounts.map((pubkey) => ({
+      ...channelBucketAccounts.map((pubkey) => ({
         pubkey,
         isSigner: false,
         isWritable: true,
@@ -241,8 +267,8 @@ function estimateLegacySignedTransactionSize(params: {
 
 function buildSyntheticLookupTable(
   programId: PublicKey,
-  participantAccounts: PublicKey[],
-  channelAccounts: PublicKey[]
+  participantBucketAccounts: PublicKey[],
+  channelBucketAccounts: PublicKey[]
 ): AddressLookupTableAccount {
   return new AddressLookupTableAccount({
     key: uniquePublicKey(9_000),
@@ -255,8 +281,8 @@ function buildSyntheticLookupTable(
         deriveProgramAddress(programId, TOKEN_REGISTRY_SEED),
         deriveProgramAddress(programId, GLOBAL_CONFIG_SEED),
         SYSVAR_INSTRUCTIONS_PUBKEY,
-        ...participantAccounts,
-        ...channelAccounts,
+        ...participantBucketAccounts,
+        ...channelBucketAccounts,
       ],
     },
   });
@@ -279,43 +305,6 @@ function estimateV0AltSignedTransactionSize(params: {
   } catch {
     return Number.MAX_SAFE_INTEGER;
   }
-}
-
-function createCurrentEd25519Instruction(
-  signers: Keypair[],
-  message: Buffer
-): TransactionInstruction {
-  const headerSize = 2 + 14 * signers.length;
-  const signerBlockSize = 32 + 64;
-  const messageOffset = headerSize + signers.length * signerBlockSize;
-  const data = Buffer.alloc(messageOffset + message.length);
-  data[0] = signers.length;
-  data[1] = 0;
-
-  for (let i = 0; i < signers.length; i += 1) {
-    const headerOffset = 2 + i * 14;
-    const publicKeyOffset = headerSize + i * signerBlockSize;
-    const signatureOffset = publicKeyOffset + 32;
-    const signature = ed25519.sign(message, signers[i].secretKey.slice(0, 32));
-
-    data.writeUInt16LE(signatureOffset, headerOffset);
-    data.writeUInt16LE(0xffff, headerOffset + 2);
-    data.writeUInt16LE(publicKeyOffset, headerOffset + 4);
-    data.writeUInt16LE(0xffff, headerOffset + 6);
-    data.writeUInt16LE(messageOffset, headerOffset + 8);
-    data.writeUInt16LE(message.length, headerOffset + 10);
-    data.writeUInt16LE(0xffff, headerOffset + 12);
-
-    Buffer.from(signers[i].publicKey.toBytes()).copy(data, publicKeyOffset);
-    Buffer.from(signature).copy(data, signatureOffset);
-  }
-  message.copy(data, messageOffset);
-
-  return new TransactionInstruction({
-    keys: [],
-    programId: Ed25519Program.programId,
-    data,
-  });
 }
 
 function shortvecLength(value: number): number {
@@ -343,69 +332,38 @@ export function measureClearingRoundCapacity(params: {
     params.participantCount,
     params.channelCount
   );
-  const message = createClearingRoundMessage(round.blocks);
+  const message = createClearingRoundMessage(round.blocks, 0x05);
 
   let authEnvelopeBytes: number;
   let serializedTxBytes: number;
-  const clearingIxDataLength =
-    params.mode === "hypothetical-bls" ||
-    params.mode === "hypothetical-bls-v0-alt"
-      ? 8 + 4 + message.length + aggregateSignatureBytes
-      : 8;
+  const clearingIxDataLength = 8 + 4 + message.length + aggregateSignatureBytes;
   const clearingInstruction = createClearingRoundInstruction(
     params.programId,
     round.submitter.publicKey,
-    round.participantAccounts,
-    round.channelAccounts,
+    round.participantBucketAccounts,
+    round.channelBucketAccounts,
     clearingIxDataLength
   );
 
-  if (
-    params.mode === "current-ed25519" ||
-    params.mode === "current-ed25519-v0-alt"
-  ) {
-    const ed25519Ix = createCurrentEd25519Instruction(
-      round.blocks.map((block) => block.signer),
-      message
-    );
-    authEnvelopeBytes = ed25519Ix.data.length;
-    const instructions = [ed25519Ix, clearingInstruction];
-    serializedTxBytes =
-      params.mode === "current-ed25519-v0-alt"
-        ? estimateV0AltSignedTransactionSize({
-            payer: round.submitter,
-            instructions,
-            lookupTable: buildSyntheticLookupTable(
-              params.programId,
-              round.participantAccounts,
-              round.channelAccounts
-            ),
-          })
-        : estimateLegacySignedTransactionSize({
-            payerKey: round.submitter.publicKey,
-            instructions,
-            requiredSignatures: 1,
-          });
-  } else {
-    authEnvelopeBytes = 8 + 4 + message.length + aggregateSignatureBytes;
-    const instructions = [clearingInstruction];
-    serializedTxBytes =
-      params.mode === "hypothetical-bls-v0-alt"
-        ? estimateV0AltSignedTransactionSize({
-            payer: round.submitter,
-            instructions,
-            lookupTable: buildSyntheticLookupTable(
-              params.programId,
-              round.participantAccounts,
-              round.channelAccounts
-            ),
-          })
-        : estimateLegacySignedTransactionSize({
-            payerKey: round.submitter.publicKey,
-            instructions,
-            requiredSignatures: 1,
-          });
-  }
+  authEnvelopeBytes = 4 + message.length + aggregateSignatureBytes;
+  const instructions = [clearingInstruction];
+  const usesV0Alt =
+    params.mode === "bls-v0-alt" || params.mode === "hypothetical-bls-v0-alt";
+  serializedTxBytes = usesV0Alt
+    ? estimateV0AltSignedTransactionSize({
+        payer: round.submitter,
+        instructions,
+        lookupTable: buildSyntheticLookupTable(
+          params.programId,
+          round.participantBucketAccounts,
+          round.channelBucketAccounts
+        ),
+      })
+    : estimateLegacySignedTransactionSize({
+        payerKey: round.submitter.publicKey,
+        instructions,
+        requiredSignatures: 1,
+      });
 
   return {
     mode: params.mode,
@@ -415,6 +373,10 @@ export function measureClearingRoundCapacity(params: {
     authEnvelopeBytes,
     serializedTxBytes,
     remainingBytes: packetDataSize - serializedTxBytes,
+    participantBucketCount: round.participantBucketAccounts.length,
+    channelBucketCount: round.channelBucketAccounts.length,
+    dynamicWritableAccountCount:
+      round.participantBucketAccounts.length + round.channelBucketAccounts.length,
     fits: serializedTxBytes <= packetDataSize,
   };
 }
@@ -516,40 +478,24 @@ export function summarizeClearingRoundCapacity(
   aggregateSignatureBytes = DEFAULT_BLS_AGGREGATE_SIGNATURE_BYTES
 ): ClearingRoundCapacitySummary {
   return {
-    currentCycle: findLargestCycleRound({
-      programId,
-      mode: "current-ed25519",
-    }),
-    currentOverall: findLargestOverallRound({
-      programId,
-      mode: "current-ed25519",
-    }),
-    currentV0AltCycle: findLargestCycleRound({
-      programId,
-      mode: "current-ed25519-v0-alt",
-    }),
-    currentV0AltOverall: findLargestOverallRound({
-      programId,
-      mode: "current-ed25519-v0-alt",
-    }),
     blsCycle: findLargestCycleRound({
       programId,
-      mode: "hypothetical-bls",
+      mode: "bls",
       aggregateSignatureBytes,
     }),
     blsOverall: findLargestOverallRound({
       programId,
-      mode: "hypothetical-bls",
+      mode: "bls",
       aggregateSignatureBytes,
     }),
     blsV0AltCycle: findLargestCycleRound({
       programId,
-      mode: "hypothetical-bls-v0-alt",
+      mode: "bls-v0-alt",
       aggregateSignatureBytes,
     }),
     blsV0AltOverall: findLargestOverallRound({
       programId,
-      mode: "hypothetical-bls-v0-alt",
+      mode: "bls-v0-alt",
       aggregateSignatureBytes,
     }),
   };

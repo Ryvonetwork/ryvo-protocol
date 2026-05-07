@@ -3,11 +3,19 @@ use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
 use crate::errors::VaultError;
 use crate::events::Withdrawn;
-use crate::state::{GlobalConfig, ParticipantAccount, TokenRegistry};
+use crate::state::{GlobalConfig, ParticipantBucket, TokenRegistry};
 
-pub fn handler(ctx: Context<ExecuteWithdrawalTimelocked>, token_id: u16) -> Result<()> {
-    let participant = &mut ctx.accounts.participant_account;
+pub fn handler(
+    ctx: Context<ExecuteWithdrawalTimelocked>,
+    token_id: u16,
+    participant_id: u32,
+) -> Result<()> {
     let config = &ctx.accounts.global_config;
+    ParticipantBucket::verify_account_info(
+        &ctx.accounts.participant_bucket.to_account_info(),
+        ParticipantBucket::bucket_id_for_participant_id(participant_id),
+        ctx.program_id,
+    )?;
 
     // Validate token is registered
     let token_entry = ctx
@@ -19,11 +27,22 @@ pub fn handler(ctx: Context<ExecuteWithdrawalTimelocked>, token_id: u16) -> Resu
         token_entry.decimals <= TokenRegistry::MAX_TOKEN_DECIMALS,
         VaultError::InvalidTokenDecimals
     );
+    // Plain timelocked execution cannot target a yield-bearing token id; clients must use
+    // `execute_withdrawal_yield_bearing` instead.
+    require!(
+        !token_entry.is_yield_bearing(),
+        VaultError::TokenIsYieldBearing
+    );
 
-    // Get token balance and validate withdrawal is pending
-    let token_balance = participant
-        .get_token_balance(token_id)
-        .ok_or(VaultError::TokenNotFound)?;
+    let token_balance = {
+        let participant_bucket_info = ctx.accounts.participant_bucket.to_account_info();
+        let participant_bucket_data = participant_bucket_info.try_borrow_data()?;
+        ParticipantBucket::read_token_withdrawal_from_data(
+            participant_bucket_data.as_ref(),
+            participant_id,
+            token_id,
+        )?
+    };
 
     require!(
         token_balance.withdrawal_unlock_at != 0,
@@ -50,12 +69,17 @@ pub fn handler(ctx: Context<ExecuteWithdrawalTimelocked>, token_id: u16) -> Resu
     // If commitments drained the full amount during timelock, just clear the pending state
     if withdrawing == 0 {
         let destination = token_balance.withdrawal_destination;
-        let token_balance_mut = participant.get_token_balance_mut(token_id).unwrap();
-        token_balance_mut.withdrawing_balance = 0;
-        token_balance_mut.withdrawal_unlock_at = 0;
-        token_balance_mut.withdrawal_destination = Pubkey::default();
+        {
+            let participant_bucket_info = ctx.accounts.participant_bucket.to_account_info();
+            let mut participant_bucket_data = participant_bucket_info.try_borrow_mut_data()?;
+            ParticipantBucket::clear_token_withdrawal_in_data(
+                participant_bucket_data.as_mut(),
+                participant_id,
+                token_id,
+            )?;
+        }
         emit!(Withdrawn {
-            participant_id: participant.participant_id,
+            participant_id,
             token_id,
             net_amount: 0,
             fee_amount: 0,
@@ -131,14 +155,18 @@ pub fn handler(ctx: Context<ExecuteWithdrawalTimelocked>, token_id: u16) -> Resu
 
     let destination = token_balance.withdrawal_destination;
 
-    // Reset participant withdrawal state for this token
-    let token_balance_mut = participant.get_token_balance_mut(token_id).unwrap();
-    token_balance_mut.withdrawing_balance = 0;
-    token_balance_mut.withdrawal_unlock_at = 0;
-    token_balance_mut.withdrawal_destination = Pubkey::default();
+    {
+        let participant_bucket_info = ctx.accounts.participant_bucket.to_account_info();
+        let mut participant_bucket_data = participant_bucket_info.try_borrow_mut_data()?;
+        ParticipantBucket::clear_token_withdrawal_in_data(
+            participant_bucket_data.as_mut(),
+            participant_id,
+            token_id,
+        )?;
+    }
 
     emit!(Withdrawn {
-        participant_id: participant.participant_id,
+        participant_id,
         token_id,
         net_amount,
         fee_amount,
@@ -149,7 +177,7 @@ pub fn handler(ctx: Context<ExecuteWithdrawalTimelocked>, token_id: u16) -> Resu
 }
 
 #[derive(Accounts)]
-#[instruction(token_id: u16)]
+#[instruction(token_id: u16, participant_id: u32)]
 pub struct ExecuteWithdrawalTimelocked<'info> {
     #[account(
         seeds = [TokenRegistry::SEED_PREFIX],
@@ -163,12 +191,9 @@ pub struct ExecuteWithdrawalTimelocked<'info> {
     )]
     pub global_config: Account<'info, GlobalConfig>,
 
-    #[account(
-        mut,
-        seeds = [ParticipantAccount::SEED_PREFIX, participant_account.owner.as_ref()],
-        bump,
-    )]
-    pub participant_account: Account<'info, ParticipantAccount>,
+    /// CHECK: Verified with ParticipantBucket::verify_account_info before raw withdrawal mutation.
+    #[account(mut)]
+    pub participant_bucket: UncheckedAccount<'info>,
 
     #[account(
         mut,
