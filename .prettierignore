@@ -1,7 +1,30 @@
+# Build & dependency output
 .anchor
-.DS_Store
 target
 node_modules
 dist
 build
+
+# Test fixtures
 test-ledger
+
+# Lock files (managed by their respective tools)
+Cargo.lock
+package-lock.json
+yarn.lock
+
+# Local secrets / per-machine config (gitignored, but kept here so prettier
+# doesn't accidentally rewrite them when run on a freshly-set-up checkout)
+keys
+config
+logs
+.env
+
+# Compiled program binaries
+*.so
+
+# Formal verification (Lean sources, not JS/TS)
+formal_verification
+
+# OS noise
+.DS_Store

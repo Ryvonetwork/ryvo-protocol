@@ -4,6 +4,14 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "ISC"
+repository = "https://github.com/Ryvonetwork/ryvo-protocol"
+homepage = "https://github.com/Ryvonetwork/ryvo-protocol"
+description = "Ryvo Network — Solana settlement layer for machine payments and agentic commerce."
+
 [profile.release]
 overflow-checks = true
 lto = "fat"

@@ -1,3 +1,5 @@
+# Pinned Rust toolchain for the Ryvo Network workspace.
+# Aligns with the Solana SBF/Agave 2.x build path used by the deploy script.
 [toolchain]
 channel = "1.89.0"
 components = ["rustfmt","clippy"]
