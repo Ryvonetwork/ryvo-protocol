@@ -32,7 +32,7 @@ use instructions::update_config::*;
 use instructions::update_inbound_channel_policy::*;
 use instructions::yield_bearing::*;
 
-declare_id!("77VR7b4BXx2KTSXA3Tbarw4w1MC5Qvv6QespTyCxWamM");
+declare_id!("PBdGbrPEPCcp8oZz42P2gFMEbXDptigPvhMYubVAaoL");
 
 #[cfg(feature = "custom-heap")]
 solana_allocator::custom_heap!();
@@ -374,5 +374,34 @@ pub mod agon_protocol {
         amount: u64,
     ) -> Result<()> {
         instructions::yield_bearing::claim_protocol_yield_fee(ctx, token_id, amount)
+    }
+
+    // ---------------------------------------------------------------------
+    // v7: opt-in / opt-out yield (internal balance moves, no wallet involvement)
+    // ---------------------------------------------------------------------
+
+    /// Opt an existing plain-USDC bucket balance into yield. Debits `amount_usdc` from the owner's
+    /// plain-USDC bucket *available* slot and credits the equivalent agUSDC shares into the owner's
+    /// yield bucket *available* slot. CPIs `mock_yield::deposit_reserve_liquidity` to deposit the
+    /// underlying USDC into the lending reserve. Locked balance is not eligible.
+    pub fn opt_in_yield(
+        ctx: Context<OptInYield>,
+        plain_token_id: u16,
+        yield_token_id: u16,
+        amount_usdc: u64,
+    ) -> Result<()> {
+        instructions::yield_bearing::opt_in_yield(ctx, plain_token_id, yield_token_id, amount_usdc)
+    }
+
+    /// Opt out of yield by burning `shares` of agUSDC and crediting the redeemed USDC back into
+    /// the owner's plain-USDC bucket *available* slot. Up to 1 lamport of dust per call may remain
+    /// in the protocol's `share_vault` (attributed to all users on the next accrual).
+    pub fn opt_out_yield(
+        ctx: Context<OptOutYield>,
+        yield_token_id: u16,
+        plain_token_id: u16,
+        shares: u64,
+    ) -> Result<()> {
+        instructions::yield_bearing::opt_out_yield(ctx, yield_token_id, plain_token_id, shares)
     }
 }

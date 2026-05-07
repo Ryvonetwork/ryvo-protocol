@@ -214,3 +214,23 @@ pub struct ProtocolYieldClaimed {
     pub usdc_amount: u64,
     pub protocol_owed_underlying_after: u64,
 }
+
+#[event]
+pub struct OptedInYield {
+    pub participant_id: u32,
+    pub plain_token_id: u16,
+    pub yield_token_id: u16,
+    pub usdc_amount: u64,
+    pub shares_minted: u64,
+    pub user_index_q64: u128,
+}
+
+#[event]
+pub struct OptedOutYield {
+    pub participant_id: u32,
+    pub yield_token_id: u16,
+    pub plain_token_id: u16,
+    pub shares_burned: u64,
+    pub usdc_credited: u64,
+    pub user_index_q64: u128,
+}

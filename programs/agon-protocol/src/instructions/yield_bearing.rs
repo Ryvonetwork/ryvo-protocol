@@ -18,7 +18,8 @@ use anchor_spl::token::{Mint, Token, TokenAccount};
 
 use crate::errors::VaultError;
 use crate::events::{
-    ProtocolYieldClaimed, YieldAccrued, YieldBearingTokenRegistered, YieldDeposited, YieldWithdrawn,
+    OptedInYield, OptedOutYield, ProtocolYieldClaimed, YieldAccrued, YieldBearingTokenRegistered,
+    YieldDeposited, YieldWithdrawn,
 };
 use crate::state::{
     apply_yield_delta, require_solvent, GlobalConfig, OwnerIndexBucket, ParticipantBucket,
@@ -725,6 +726,324 @@ pub fn claim_protocol_yield_fee(
 }
 
 // ---------------------------------------------------------------------------
+// opt_in_yield
+// ---------------------------------------------------------------------------
+//
+// Move `amount_usdc` of an owner's plain-USDC bucket into yield. Protocol-internal: the user's
+// wallet ATA is never touched; the underlying USDC moves between protocol-owned vault PDAs only.
+//
+// Sequence:
+//   1. Validate plain entry (`!is_yield_bearing`), yield entry (`is_yield_bearing`), and that
+//      `plain_token_entry.mint == strategy.underlying_mint` (else `MismatchedYieldUnderlying`).
+//   2. `accrue_strategy(...)` — refresh index against latest mock-yield rate.
+//   3. Debit `amount_usdc` from owner's plain bucket *available* slot (errors if too low — locked
+//      balance is not eligible).
+//   4. CPI `mock_yield::deposit_reserve_liquidity`, signed by `global_config` PDA. Plain USDC vault
+//      PDA -> mock-yield's liquidity_vault; cUSDC mints into agon's `share_vault`.
+//   5. `shares_minted = strategy.usdc_to_shares(amount_usdc)`. `total_user_shares` and
+//      `last_settled_underlying` both grow by exactly the user's contribution.
+//   6. Credit `shares_minted` into the owner's yield bucket *available* slot.
+//   7. Solvency check.
+
+pub fn opt_in_yield(
+    ctx: Context<OptInYield>,
+    plain_token_id: u16,
+    yield_token_id: u16,
+    amount_usdc: u64,
+) -> Result<()> {
+    require!(amount_usdc > 0, VaultError::AmountMustBePositive);
+    require!(
+        plain_token_id != yield_token_id,
+        VaultError::InvalidYieldStrategy
+    );
+
+    let strategy_token_id = ctx.accounts.yield_strategy.token_id;
+    require!(
+        strategy_token_id == yield_token_id,
+        VaultError::InvalidYieldStrategy
+    );
+
+    // 1. TokenRegistry validation.
+    let underlying_mint_key = ctx.accounts.underlying_mint.key();
+    {
+        let registry = &ctx.accounts.token_registry;
+        let plain_entry = registry
+            .find_token(plain_token_id)
+            .ok_or(error!(VaultError::TokenNotFound))?;
+        require!(
+            !plain_entry.is_yield_bearing(),
+            VaultError::TokenIsYieldBearing
+        );
+        require_keys_eq!(
+            plain_entry.mint,
+            underlying_mint_key,
+            VaultError::MismatchedYieldUnderlying
+        );
+
+        let yield_entry = registry
+            .find_token(yield_token_id)
+            .ok_or(error!(VaultError::TokenNotFound))?;
+        require!(
+            yield_entry.is_yield_bearing(),
+            VaultError::TokenIsNotYieldBearing
+        );
+    }
+
+    // 2. Resolve owner's participant id.
+    let owner_key = ctx.accounts.owner.key();
+    let participant_id = ctx
+        .accounts
+        .owner_index_bucket
+        .participant_id_for_verified_owner(
+            &ctx.accounts.owner_index_bucket.key(),
+            &owner_key,
+            ctx.program_id,
+        )?;
+    ParticipantBucket::verify_account_info(
+        &ctx.accounts.participant_bucket.to_account_info(),
+        ParticipantBucket::bucket_id_for_participant_id(participant_id),
+        ctx.program_id,
+    )?;
+
+    // 3. Refresh strategy + debit plain bucket *available* (insufficient -> InsufficientBalance).
+    let strategy = &mut ctx.accounts.yield_strategy;
+    let _snap = accrue_strategy(
+        strategy,
+        &ctx.accounts.yield_program,
+        &ctx.accounts.reserve,
+        &ctx.accounts.share_mint,
+        &ctx.accounts.share_vault,
+    )?;
+
+    {
+        let info = ctx.accounts.participant_bucket.to_account_info();
+        let mut data = info.try_borrow_mut_data()?;
+        ParticipantBucket::debit_token_available_in_data(
+            data.as_mut(),
+            participant_id,
+            plain_token_id,
+            amount_usdc,
+        )?;
+    }
+
+    // 4. CPI deposit_reserve_liquidity, signed by global_config PDA over the plain USDC vault.
+    let global_config_bump = ctx.bumps.global_config;
+    let signer_seeds: &[&[&[u8]]] = &[&[GlobalConfig::SEED_PREFIX, &[global_config_bump]]];
+
+    cpi_deposit_reserve_liquidity_signed(
+        &ctx.accounts.yield_program,
+        &ctx.accounts.reserve.to_account_info(),
+        &ctx.accounts.underlying_mint,
+        &ctx.accounts.share_mint,
+        &ctx.accounts.liquidity_vault,
+        &ctx.accounts.plain_vault_token_account,
+        &ctx.accounts.share_vault,
+        &ctx.accounts.global_config.to_account_info(),
+        &ctx.accounts.token_program,
+        amount_usdc,
+        signer_seeds,
+    )?;
+
+    // 5. Credit shares + update strategy counters.
+    let shares_minted = strategy.usdc_to_shares(amount_usdc)?;
+    require!(shares_minted > 0, VaultError::AmountMustBePositive);
+
+    strategy.total_user_shares = strategy
+        .total_user_shares
+        .checked_add(shares_minted)
+        .ok_or(error!(VaultError::MathOverflow))?;
+    strategy.last_settled_underlying = strategy
+        .last_settled_underlying
+        .checked_add(amount_usdc)
+        .ok_or(error!(VaultError::MathOverflow))?;
+
+    {
+        let info = ctx.accounts.participant_bucket.to_account_info();
+        let mut data = info.try_borrow_mut_data()?;
+        ParticipantBucket::apply_token_delta_in_data(
+            data.as_mut(),
+            participant_id,
+            yield_token_id,
+            i128::from(shares_minted),
+        )?;
+    }
+
+    // 6. Solvency: fresh `last_settled_underlying` is the tracked LHS (over-counts the new
+    // contribution by exactly `amount_usdc`, exactly matching the new RHS).
+    require_solvent(strategy, strategy.last_settled_underlying)?;
+
+    emit!(OptedInYield {
+        participant_id,
+        plain_token_id,
+        yield_token_id,
+        usdc_amount: amount_usdc,
+        shares_minted,
+        user_index_q64: strategy.user_index_q64,
+    });
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// opt_out_yield
+// ---------------------------------------------------------------------------
+//
+// Burn `shares` agUSDC from the owner's yield bucket; redeem cUSDC to USDC into the protocol's
+// plain USDC vault PDA; credit the owner's plain bucket with the redeemed USDC.
+//
+// Mirror of `opt_in_yield`. Round-down on cUSDC redemption can leave 1 lamport of dust per call
+// in `share_vault`; the dust is attributed to all users on the next accrual.
+
+pub fn opt_out_yield(
+    ctx: Context<OptOutYield>,
+    yield_token_id: u16,
+    plain_token_id: u16,
+    shares: u64,
+) -> Result<()> {
+    require!(shares > 0, VaultError::AmountMustBePositive);
+    require!(
+        plain_token_id != yield_token_id,
+        VaultError::InvalidYieldStrategy
+    );
+
+    let strategy_token_id = ctx.accounts.yield_strategy.token_id;
+    require!(
+        strategy_token_id == yield_token_id,
+        VaultError::InvalidYieldStrategy
+    );
+
+    // 1. TokenRegistry validation.
+    let underlying_mint_key = ctx.accounts.underlying_mint.key();
+    {
+        let registry = &ctx.accounts.token_registry;
+        let yield_entry = registry
+            .find_token(yield_token_id)
+            .ok_or(error!(VaultError::TokenNotFound))?;
+        require!(
+            yield_entry.is_yield_bearing(),
+            VaultError::TokenIsNotYieldBearing
+        );
+
+        let plain_entry = registry
+            .find_token(plain_token_id)
+            .ok_or(error!(VaultError::TokenNotFound))?;
+        require!(
+            !plain_entry.is_yield_bearing(),
+            VaultError::TokenIsYieldBearing
+        );
+        require_keys_eq!(
+            plain_entry.mint,
+            underlying_mint_key,
+            VaultError::MismatchedYieldUnderlying
+        );
+    }
+
+    // 2. Resolve owner's participant id.
+    let owner_key = ctx.accounts.owner.key();
+    let participant_id = ctx
+        .accounts
+        .owner_index_bucket
+        .participant_id_for_verified_owner(
+            &ctx.accounts.owner_index_bucket.key(),
+            &owner_key,
+            ctx.program_id,
+        )?;
+    ParticipantBucket::verify_account_info(
+        &ctx.accounts.participant_bucket.to_account_info(),
+        ParticipantBucket::bucket_id_for_participant_id(participant_id),
+        ctx.program_id,
+    )?;
+
+    // 3. Refresh strategy.
+    let strategy = &mut ctx.accounts.yield_strategy;
+    let snap = accrue_strategy(
+        strategy,
+        &ctx.accounts.yield_program,
+        &ctx.accounts.reserve,
+        &ctx.accounts.share_mint,
+        &ctx.accounts.share_vault,
+    )?;
+
+    // 4. Debit shares from yield bucket *available* (locked is excluded).
+    {
+        let info = ctx.accounts.participant_bucket.to_account_info();
+        let mut data = info.try_borrow_mut_data()?;
+        ParticipantBucket::debit_token_available_in_data(
+            data.as_mut(),
+            participant_id,
+            yield_token_id,
+            shares,
+        )?;
+    }
+
+    // 5. Compute redemption amounts.
+    //    `usdc_owed`              = user's USDC claim per current index (rounds down).
+    //    `cusdc_to_burn`          = shares of mock-yield to redeem (rounds down -> ≤ usdc_owed).
+    //    `usdc_actually_received` = USDC the redeem will deposit into the plain vault.
+    //
+    // We credit the owner's plain bucket with `usdc_actually_received` so the bucket and the plain
+    // vault stay in lock-step; up to 1 lamport of dust remains in `share_vault` and accrues back to
+    // all users on the next yield update.
+    let usdc_owed = strategy.shares_to_usdc(shares)?;
+    require!(usdc_owed > 0, VaultError::AmountMustBePositive);
+    let cusdc_to_burn = usdc_to_cusdc_round_down(usdc_owed, snap)?;
+    require!(cusdc_to_burn > 0, VaultError::AmountMustBePositive);
+    let usdc_actually_received = cusdc_to_usdc(cusdc_to_burn, snap)?;
+    require!(usdc_actually_received > 0, VaultError::AmountMustBePositive);
+
+    // 6. CPI redeem: share_vault burns cusdc_to_burn, plain USDC vault receives
+    // usdc_actually_received USDC. Authority over share_vault is global_config PDA.
+    let global_config_bump = ctx.bumps.global_config;
+    let signer_seeds: &[&[&[u8]]] = &[&[GlobalConfig::SEED_PREFIX, &[global_config_bump]]];
+
+    cpi_redeem_reserve_collateral(
+        &ctx.accounts.yield_program,
+        &ctx.accounts.reserve.to_account_info(),
+        &ctx.accounts.underlying_mint,
+        &ctx.accounts.share_mint,
+        &ctx.accounts.liquidity_vault,
+        &ctx.accounts.share_vault,
+        &ctx.accounts.plain_vault_token_account,
+        &ctx.accounts.global_config.to_account_info(),
+        &ctx.accounts.token_program,
+        cusdc_to_burn,
+        signer_seeds,
+    )?;
+
+    // 7. Update strategy + credit plain bucket.
+    strategy.total_user_shares = strategy
+        .total_user_shares
+        .checked_sub(shares)
+        .ok_or(error!(VaultError::MathOverflow))?;
+    strategy.last_settled_underlying = strategy
+        .last_settled_underlying
+        .saturating_sub(usdc_actually_received);
+
+    {
+        let info = ctx.accounts.participant_bucket.to_account_info();
+        let mut data = info.try_borrow_mut_data()?;
+        ParticipantBucket::apply_token_delta_in_data(
+            data.as_mut(),
+            participant_id,
+            plain_token_id,
+            i128::from(usdc_actually_received),
+        )?;
+    }
+
+    // 8. Solvency check using the freshly-decremented LHS.
+    require_solvent(strategy, strategy.last_settled_underlying)?;
+
+    emit!(OptedOutYield {
+        participant_id,
+        yield_token_id,
+        plain_token_id,
+        shares_burned: shares,
+        usdc_credited: usdc_actually_received,
+        user_index_q64: strategy.user_index_q64,
+    });
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // CPI helpers
 // ---------------------------------------------------------------------------
 
@@ -752,6 +1071,36 @@ fn cpi_deposit_reserve_liquidity<'info>(
         token_program: token_program.to_account_info(),
     };
     let cpi_ctx = CpiContext::new(yield_program.clone(), cpi_accounts);
+    mock_yield::cpi::deposit_reserve_liquidity(cpi_ctx, amount)
+}
+
+/// PDA-signed variant of `cpi_deposit_reserve_liquidity` for when the source `depositor_underlying`
+/// is a protocol-owned PDA (e.g. the plain USDC vault during `opt_in_yield`).
+#[allow(clippy::too_many_arguments)]
+fn cpi_deposit_reserve_liquidity_signed<'info>(
+    yield_program: &AccountInfo<'info>,
+    reserve: &AccountInfo<'info>,
+    underlying_mint: &Account<'info, Mint>,
+    share_mint: &Account<'info, Mint>,
+    liquidity_vault: &Account<'info, TokenAccount>,
+    depositor_underlying: &Account<'info, TokenAccount>,
+    depositor_shares: &Account<'info, TokenAccount>,
+    depositor: &AccountInfo<'info>,
+    token_program: &Program<'info, Token>,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    let cpi_accounts = mock_yield::cpi::accounts::DepositReserveLiquidity {
+        reserve: reserve.clone(),
+        underlying_mint: underlying_mint.to_account_info(),
+        share_mint: share_mint.to_account_info(),
+        liquidity_vault: liquidity_vault.to_account_info(),
+        depositor_underlying: depositor_underlying.to_account_info(),
+        depositor_shares: depositor_shares.to_account_info(),
+        depositor: depositor.clone(),
+        token_program: token_program.to_account_info(),
+    };
+    let cpi_ctx = CpiContext::new_with_signer(yield_program.clone(), cpi_accounts, signer_seeds);
     mock_yield::cpi::deposit_reserve_liquidity(cpi_ctx, amount)
 }
 
@@ -1104,6 +1453,150 @@ pub struct ClaimProtocolYieldFee<'info> {
 
     /// Must be the fee_recipient (verified inside the handler against `global_config.fee_recipient`).
     pub fee_recipient: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+#[instruction(plain_token_id: u16, yield_token_id: u16)]
+pub struct OptInYield<'info> {
+    #[account(
+        seeds = [TokenRegistry::SEED_PREFIX],
+        bump = token_registry.bump,
+    )]
+    pub token_registry: Box<Account<'info, TokenRegistry>>,
+
+    #[account(
+        seeds = [GlobalConfig::SEED_PREFIX],
+        bump,
+    )]
+    pub global_config: Box<Account<'info, GlobalConfig>>,
+
+    #[account(
+        mut,
+        seeds = [YIELD_STRATEGY_SEED, yield_token_id.to_le_bytes().as_ref()],
+        bump = yield_strategy.bump,
+    )]
+    pub yield_strategy: Box<Account<'info, YieldStrategy>>,
+
+    /// Plain USDC vault PDA (token-id-scoped). Source of underlying for the lending CPI.
+    #[account(
+        mut,
+        seeds = [b"vault-token-account", plain_token_id.to_le_bytes().as_ref()],
+        bump,
+        constraint = plain_vault_token_account.mint == yield_strategy.underlying_mint @ VaultError::MismatchedYieldUnderlying,
+    )]
+    pub plain_vault_token_account: Box<Account<'info, TokenAccount>>,
+
+    /// CHECK: Verified with ParticipantBucket::verify_account_info before raw mutation.
+    #[account(mut)]
+    pub participant_bucket: UncheckedAccount<'info>,
+
+    pub owner_index_bucket: Box<Account<'info, OwnerIndexBucket>>,
+
+    /// CHECK: validated inside accrue_strategy via strategy.yield_program.
+    pub yield_program: UncheckedAccount<'info>,
+
+    /// CHECK: validated inside accrue_strategy via strategy.reserve.
+    #[account(mut)]
+    pub reserve: UncheckedAccount<'info>,
+
+    #[account(
+        address = yield_strategy.underlying_mint @ VaultError::YieldUnderlyingMismatch,
+    )]
+    pub underlying_mint: Box<Account<'info, Mint>>,
+
+    #[account(
+        mut,
+        address = yield_strategy.share_mint @ VaultError::InvalidYieldStrategy,
+    )]
+    pub share_mint: Box<Account<'info, Mint>>,
+
+    #[account(
+        mut,
+        address = yield_strategy.liquidity_vault @ VaultError::InvalidYieldStrategy,
+    )]
+    pub liquidity_vault: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        address = yield_strategy.share_vault @ VaultError::InvalidYieldStrategy,
+    )]
+    pub share_vault: Box<Account<'info, TokenAccount>>,
+
+    pub owner: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+#[instruction(yield_token_id: u16, plain_token_id: u16)]
+pub struct OptOutYield<'info> {
+    #[account(
+        seeds = [TokenRegistry::SEED_PREFIX],
+        bump = token_registry.bump,
+    )]
+    pub token_registry: Box<Account<'info, TokenRegistry>>,
+
+    #[account(
+        seeds = [GlobalConfig::SEED_PREFIX],
+        bump,
+    )]
+    pub global_config: Box<Account<'info, GlobalConfig>>,
+
+    #[account(
+        mut,
+        seeds = [YIELD_STRATEGY_SEED, yield_token_id.to_le_bytes().as_ref()],
+        bump = yield_strategy.bump,
+    )]
+    pub yield_strategy: Box<Account<'info, YieldStrategy>>,
+
+    /// Plain USDC vault PDA — destination for redeemed underlying.
+    #[account(
+        mut,
+        seeds = [b"vault-token-account", plain_token_id.to_le_bytes().as_ref()],
+        bump,
+        constraint = plain_vault_token_account.mint == yield_strategy.underlying_mint @ VaultError::MismatchedYieldUnderlying,
+    )]
+    pub plain_vault_token_account: Box<Account<'info, TokenAccount>>,
+
+    /// CHECK: Verified with ParticipantBucket::verify_account_info before raw mutation.
+    #[account(mut)]
+    pub participant_bucket: UncheckedAccount<'info>,
+
+    pub owner_index_bucket: Box<Account<'info, OwnerIndexBucket>>,
+
+    /// CHECK: validated inside accrue_strategy via strategy.yield_program.
+    pub yield_program: UncheckedAccount<'info>,
+
+    /// CHECK: validated inside accrue_strategy via strategy.reserve.
+    #[account(mut)]
+    pub reserve: UncheckedAccount<'info>,
+
+    #[account(
+        address = yield_strategy.underlying_mint @ VaultError::YieldUnderlyingMismatch,
+    )]
+    pub underlying_mint: Box<Account<'info, Mint>>,
+
+    #[account(
+        mut,
+        address = yield_strategy.share_mint @ VaultError::InvalidYieldStrategy,
+    )]
+    pub share_mint: Box<Account<'info, Mint>>,
+
+    #[account(
+        mut,
+        address = yield_strategy.liquidity_vault @ VaultError::InvalidYieldStrategy,
+    )]
+    pub liquidity_vault: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        address = yield_strategy.share_vault @ VaultError::InvalidYieldStrategy,
+    )]
+    pub share_vault: Box<Account<'info, TokenAccount>>,
+
+    pub owner: Signer<'info>,
 
     pub token_program: Program<'info, Token>,
 }

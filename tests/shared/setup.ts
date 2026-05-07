@@ -12,6 +12,7 @@ import {
 import { createHash } from "crypto";
 import {
   TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   createMint,
   createAccount,
   mintTo,
@@ -19,6 +20,7 @@ import {
   getOrCreateAssociatedTokenAccount,
 } from "@solana/spl-token";
 import { AgonProtocol } from "../../target/types/agon_protocol";
+import { MockYield } from "../../target/types/mock_yield";
 import { expect } from "chai";
 import { ed25519 } from "@noble/curves/ed25519";
 import {
@@ -1463,4 +1465,492 @@ export function nextCommitmentAmount(
     delta instanceof anchor.BN ? delta : new anchor.BN(delta.toString());
   const current = channelData.settledCumulative ?? new anchor.BN(0);
   return new anchor.BN(current.toString()).add(deltaBn);
+}
+
+// ---------------------------------------------------------------------------
+// v6 yield-bearing test helpers (mock-yield + agUSDC).
+//
+// These helpers register agUSDC as token_id=AG_USDC_TOKEN_ID alongside the existing primary
+// plain-token (TOK1, token_id=PRIMARY_TOKEN_ID=1), so existing tests are untouched. New tests can
+// `await getYieldBearingTestbed()` once and then drive yield-bearing flows through the helpers
+// below.
+// ---------------------------------------------------------------------------
+
+// Picked to avoid collisions with token_ids used by other test files (currently 1-4, 11-16).
+export const AG_USDC_TOKEN_ID = 50;
+export const AG_USDC_SYMBOL = "agUSDC";
+export const PROTOCOL_YIELD_SHARE_BPS = 3_333; // ~33.33% of yield goes to the protocol fee_recipient.
+
+// PDA seeds — must mirror agon-protocol::state::yield_strategy and mock-yield::state.
+export const YIELD_STRATEGY_SEED = Buffer.from("yield-strategy");
+export const YIELD_SHARE_VAULT_SEED = Buffer.from("yield-share-vault");
+export const RESERVE_SEED = Buffer.from("reserve");
+export const SHARE_MINT_SEED = Buffer.from("share-mint");
+export const LIQUIDITY_VAULT_SEED = Buffer.from("liquidity-vault");
+
+export const mockYieldProgram = anchor.workspace
+  .mockYield as Program<MockYield>;
+
+function u16Le(value: number): Buffer {
+  return new anchor.BN(value).toArrayLike(Buffer, "le", 2);
+}
+
+export function findYieldStrategyPda(tokenId: number): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [YIELD_STRATEGY_SEED, u16Le(tokenId)],
+    program.programId
+  )[0];
+}
+
+export function findYieldShareVaultPda(tokenId: number): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [YIELD_SHARE_VAULT_SEED, u16Le(tokenId)],
+    program.programId
+  )[0];
+}
+
+export function findReservePda(underlyingMint: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [RESERVE_SEED, underlyingMint.toBuffer()],
+    mockYieldProgram.programId
+  )[0];
+}
+
+export function findShareMintPda(underlyingMint: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [SHARE_MINT_SEED, underlyingMint.toBuffer()],
+    mockYieldProgram.programId
+  )[0];
+}
+
+export function findLiquidityVaultPda(underlyingMint: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [LIQUIDITY_VAULT_SEED, underlyingMint.toBuffer()],
+    mockYieldProgram.programId
+  )[0];
+}
+
+function symbolBytes(s: string): number[] {
+  if (s.length > 8) throw new Error(`symbol too long: ${s}`);
+  const buf = Buffer.alloc(8);
+  buf.write(s, "utf8");
+  return [...buf];
+}
+
+export interface YieldBearingTestbed {
+  underlyingMint: PublicKey; // == primaryMint, reused for both TOK1 and agUSDC's underlying.
+  reserve: PublicKey;
+  shareMint: PublicKey;
+  liquidityVault: PublicKey;
+  yieldStrategy: PublicKey;
+  shareVault: PublicKey;
+  feeRecipientUsdcAta: PublicKey;
+}
+
+let cachedTestbed: YieldBearingTestbed | null = null;
+
+/**
+ * Idempotent bootstrap of the mock-yield reserve + agUSDC yield-bearing token registration.
+ * Safe to call from any number of test files; the work is done at most once per `anchor test` run.
+ *
+ * Reuses `primaryMint` as the underlying USDC mint. Mints a generous buffer into liquidity_vault so
+ * accrued yield is actually redeemable (mock-yield's accrual is virtual — see comment on
+ * scripts/yield-bearing-demo.ts::ensureLiquidityVaultYieldBuffer).
+ */
+export async function getYieldBearingTestbed(): Promise<YieldBearingTestbed> {
+  if (cachedTestbed) return cachedTestbed;
+
+  const reserve = findReservePda(primaryMint);
+  const shareMint = findShareMintPda(primaryMint);
+  const liquidityVault = findLiquidityVaultPda(primaryMint);
+  const yieldStrategy = findYieldStrategyPda(AG_USDC_TOKEN_ID);
+  const shareVault = findYieldShareVaultPda(AG_USDC_TOKEN_ID);
+
+  // 1) mock-yield reserve — initialise once. APY is irrelevant for solvency assertions; tests that
+  // care about magnitude can call updateApyBps directly.
+  const reserveInfo = await provider.connection.getAccountInfo(reserve);
+  if (!reserveInfo) {
+    await mockYieldProgram.methods
+      .initializeReserve(600 /* 6% APY */)
+      .accounts({
+        underlyingMint: primaryMint,
+        authority: deployer.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      } as any)
+      .signers([deployer])
+      .rpc();
+  }
+
+  // 2) liquidity_vault buffer — mint 1B units (1000 USDC equivalent). Deployer is mint authority
+  // for primaryMint so this just works on localnet.
+  const vaultAccount = await getAccount(
+    provider.connection,
+    liquidityVault,
+    "confirmed"
+  ).catch(() => null);
+  const desiredBuffer = 1_000_000_000n; // 1000 USDC at 6dp
+  const currentVault = vaultAccount?.amount ?? 0n;
+  if (currentVault < desiredBuffer) {
+    await mintTo(
+      provider.connection,
+      deployer,
+      primaryMint,
+      liquidityVault,
+      deployer,
+      Number(desiredBuffer - currentVault)
+    );
+  }
+
+  // 3) Register agUSDC at token_id=AG_USDC_TOKEN_ID. The plain TOK1 stays at PRIMARY_TOKEN_ID=1.
+  const strategyInfo = await provider.connection.getAccountInfo(yieldStrategy);
+  if (!strategyInfo) {
+    await program.methods
+      .registerYieldBearingToken(
+        AG_USDC_TOKEN_ID,
+        symbolBytes(AG_USDC_SYMBOL),
+        PROTOCOL_YIELD_SHARE_BPS
+      )
+      .accounts({
+        underlyingMint: primaryMint,
+        yieldProgram: mockYieldProgram.programId,
+        reserve,
+        shareMint,
+        liquidityVault,
+        authority: deployer.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      } as any)
+      .signers([deployer])
+      .rpc();
+
+    registeredTokens.set(AG_USDC_TOKEN_ID, {
+      mint: primaryMint,
+      feeRecipientTokenAccount,
+    });
+  }
+
+  // 4) Fee recipient ATA — `claim_protocol_yield_fee` and `execute_withdrawal_yield_bearing` need
+  // a USDC ATA owned by the fee_recipient. The existing primary-token feeRecipientTokenAccount is
+  // an SPL account on the same mint with the same owner, so we can reuse it.
+  const feeRecipientUsdcAta = feeRecipientTokenAccount;
+
+  cachedTestbed = {
+    underlyingMint: primaryMint,
+    reserve,
+    shareMint,
+    liquidityVault,
+    yieldStrategy,
+    shareVault,
+    feeRecipientUsdcAta,
+  };
+  return cachedTestbed;
+}
+
+/** Deposit USDC -> agUSDC for a participant (auto-creates user's USDC ATA + funds it). */
+export async function depositYieldBearingForTest(params: {
+  owner: Keypair;
+  /** Pass `participantPda` if the caller already knows it; otherwise we look it up. */
+  participantPda?: PublicKey;
+  /** Underlying USDC amount (6dp). The user's ATA is funded with this exact amount before deposit. */
+  amountUsdc: number;
+}): Promise<{
+  testbed: YieldBearingTestbed;
+  ownerUsdcAta: PublicKey;
+  participantPda: PublicKey;
+}> {
+  const testbed = await getYieldBearingTestbed();
+  const participantPda =
+    params.participantPda ?? findParticipantPda(params.owner.publicKey);
+
+  // Ensure the user has an ATA holding `amountUsdc` of underlying USDC.
+  const ownerUsdcAta = await createFundedTokenAccount(
+    params.owner,
+    primaryMint,
+    params.amountUsdc
+  );
+
+  await program.methods
+    .depositYieldBearing(AG_USDC_TOKEN_ID, new anchor.BN(params.amountUsdc))
+    .accounts({
+      participantBucket: participantPda,
+      ownerIndexBucket: findOwnerIndexBucketPda(params.owner.publicKey),
+      yieldProgram: mockYieldProgram.programId,
+      reserve: testbed.reserve,
+      underlyingMint: primaryMint,
+      shareMint: testbed.shareMint,
+      liquidityVault: testbed.liquidityVault,
+      shareVault: testbed.shareVault,
+      depositorUnderlying: ownerUsdcAta,
+      depositor: params.owner.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    } as any)
+    .signers([params.owner])
+    .rpc();
+
+  return { testbed, ownerUsdcAta, participantPda };
+}
+
+/** Permissionlessly accrue yield on the strategy. */
+export async function accrueYieldForTest(): Promise<void> {
+  const testbed = await getYieldBearingTestbed();
+  await program.methods
+    .accrueYield()
+    .accounts({
+      yieldStrategy: testbed.yieldStrategy,
+      yieldProgram: mockYieldProgram.programId,
+      reserve: testbed.reserve,
+      shareMint: testbed.shareMint,
+      shareVault: testbed.shareVault,
+    } as any)
+    .rpc();
+}
+
+/** Update mock-yield's APY (deployer is the mock-yield reserve authority). */
+export async function updateMockYieldApyForTest(apyBps: number): Promise<void> {
+  const testbed = await getYieldBearingTestbed();
+  await mockYieldProgram.methods
+    .updateApyBps(apyBps)
+    .accounts({
+      reserve: testbed.reserve,
+      authority: deployer.publicKey,
+    } as any)
+    .signers([deployer])
+    .rpc();
+}
+
+/** Permissioned protocol-fee claim by the fee_recipient signer. */
+export async function claimProtocolYieldFeeForTest(
+  amountUsdc: anchor.BN
+): Promise<void> {
+  const testbed = await getYieldBearingTestbed();
+  await program.methods
+    .claimProtocolYieldFee(AG_USDC_TOKEN_ID, amountUsdc)
+    .accounts({
+      yieldStrategy: testbed.yieldStrategy,
+      yieldProgram: mockYieldProgram.programId,
+      reserve: testbed.reserve,
+      underlyingMint: primaryMint,
+      shareMint: testbed.shareMint,
+      liquidityVault: testbed.liquidityVault,
+      shareVault: testbed.shareVault,
+      feeRecipientTokenAccount: testbed.feeRecipientUsdcAta,
+      feeRecipient: feeRecipient.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    } as any)
+    .signers([feeRecipient])
+    .rpc();
+}
+
+/** Internal opt-in: move `amountUsdc` from owner's plain bucket to their agUSDC bucket. */
+export async function optInYieldForTest(params: {
+  owner: Keypair;
+  /** The plain token id to debit from. */
+  plainTokenId?: number;
+  /** Underlying USDC amount (6dp) to opt into yield. */
+  amountUsdc: number | bigint;
+}): Promise<{ testbed: YieldBearingTestbed }> {
+  const testbed = await getYieldBearingTestbed();
+  const plainTokenId = params.plainTokenId ?? PRIMARY_TOKEN_ID;
+  const participantPda = findParticipantPda(params.owner.publicKey);
+  const amountBN = new anchor.BN(params.amountUsdc.toString());
+
+  const sig = await program.methods
+    .optInYield(plainTokenId, AG_USDC_TOKEN_ID, amountBN)
+    .accounts({
+      tokenRegistry: findTokenRegistryPda(),
+      globalConfig: findGlobalConfigPda(),
+      yieldStrategy: testbed.yieldStrategy,
+      plainVaultTokenAccount: findVaultTokenAccountPda(plainTokenId),
+      participantBucket: participantPda,
+      ownerIndexBucket: findOwnerIndexBucketPda(params.owner.publicKey),
+      yieldProgram: mockYieldProgram.programId,
+      reserve: testbed.reserve,
+      underlyingMint: primaryMint,
+      shareMint: testbed.shareMint,
+      liquidityVault: testbed.liquidityVault,
+      shareVault: testbed.shareVault,
+      owner: params.owner.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    } as any)
+    .signers([params.owner])
+    .rpc();
+  // Wait for "confirmed" commitment so subsequent SPL token reads see the post-CPI state on
+  // localnet — without this, the validator's confirmed-level cache can lag by ~one slot and
+  // tests downstream see stale share_vault / liquidity_vault balances.
+  await provider.connection.confirmTransaction(sig, "confirmed");
+
+  return { testbed };
+}
+
+/** Internal opt-out: burn `shares` of agUSDC and credit the redeemed USDC to plain bucket. */
+export async function optOutYieldForTest(params: {
+  owner: Keypair;
+  shares: anchor.BN | number | bigint;
+  plainTokenId?: number;
+}): Promise<{ testbed: YieldBearingTestbed }> {
+  const testbed = await getYieldBearingTestbed();
+  const plainTokenId = params.plainTokenId ?? PRIMARY_TOKEN_ID;
+  const participantPda = findParticipantPda(params.owner.publicKey);
+  const sharesBN =
+    params.shares instanceof anchor.BN
+      ? params.shares
+      : new anchor.BN(params.shares.toString());
+
+  const sig = await program.methods
+    .optOutYield(AG_USDC_TOKEN_ID, plainTokenId, sharesBN)
+    .accounts({
+      tokenRegistry: findTokenRegistryPda(),
+      globalConfig: findGlobalConfigPda(),
+      yieldStrategy: testbed.yieldStrategy,
+      plainVaultTokenAccount: findVaultTokenAccountPda(plainTokenId),
+      participantBucket: participantPda,
+      ownerIndexBucket: findOwnerIndexBucketPda(params.owner.publicKey),
+      yieldProgram: mockYieldProgram.programId,
+      reserve: testbed.reserve,
+      underlyingMint: primaryMint,
+      shareMint: testbed.shareMint,
+      liquidityVault: testbed.liquidityVault,
+      shareVault: testbed.shareVault,
+      owner: params.owner.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    } as any)
+    .signers([params.owner])
+    .rpc();
+  await provider.connection.confirmTransaction(sig, "confirmed");
+
+  return { testbed };
+}
+
+/** Two-step yield-bearing withdrawal — request + execute. Returns the user's USDC ATA. */
+export async function withdrawYieldBearingForTest(params: {
+  owner: Keypair;
+  shares: anchor.BN | number | bigint;
+  /** Where the underlying USDC is paid out. Auto-created if omitted. */
+  destinationUsdcAta?: PublicKey;
+}): Promise<{
+  testbed: YieldBearingTestbed;
+  destinationUsdcAta: PublicKey;
+}> {
+  const testbed = await getYieldBearingTestbed();
+  const participantPda = findParticipantPda(params.owner.publicKey);
+  const sharesBN =
+    params.shares instanceof anchor.BN
+      ? params.shares
+      : new anchor.BN(params.shares.toString());
+
+  const destinationUsdcAta =
+    params.destinationUsdcAta ??
+    (
+      await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        deployer,
+        primaryMint,
+        params.owner.publicKey,
+        false,
+        "confirmed"
+      )
+    ).address;
+
+  await program.methods
+    .requestWithdrawalYieldBearing(
+      AG_USDC_TOKEN_ID,
+      sharesBN,
+      destinationUsdcAta
+    )
+    .accounts({
+      participantBucket: participantPda,
+      ownerIndexBucket: findOwnerIndexBucketPda(params.owner.publicKey),
+      withdrawalDestination: destinationUsdcAta,
+      owner: params.owner.publicKey,
+    } as any)
+    .signers([params.owner])
+    .rpc();
+
+  await program.methods
+    .executeWithdrawalYieldBearing(
+      AG_USDC_TOKEN_ID,
+      knownParticipantId(params.owner.publicKey)
+    )
+    .accounts({
+      participantBucket: participantPda,
+      yieldProgram: mockYieldProgram.programId,
+      reserve: testbed.reserve,
+      underlyingMint: primaryMint,
+      shareMint: testbed.shareMint,
+      liquidityVault: testbed.liquidityVault,
+      shareVault: testbed.shareVault,
+      withdrawalDestination: destinationUsdcAta,
+      feeRecipientTokenAccount: testbed.feeRecipientUsdcAta,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    } as any)
+    .rpc();
+
+  return { testbed, destinationUsdcAta };
+}
+
+/** Decode YieldStrategy with the fields tests care about. */
+export interface YieldStrategySnapshot {
+  userIndexQ64: bigint;
+  totalUserShares: bigint;
+  protocolOwedUnderlying: bigint;
+  lastSettledUnderlying: bigint;
+}
+
+export async function fetchYieldStrategy(): Promise<YieldStrategySnapshot> {
+  const testbed = await getYieldBearingTestbed();
+  const acc: any = await (program.account as any).yieldStrategy.fetch(
+    testbed.yieldStrategy
+  );
+  return {
+    userIndexQ64: BigInt(acc.userIndexQ64.toString()),
+    totalUserShares: BigInt(acc.totalUserShares.toString()),
+    protocolOwedUnderlying: BigInt(acc.protocolOwedUnderlying.toString()),
+    lastSettledUnderlying: BigInt(acc.lastSettledUnderlying.toString()),
+  };
+}
+
+/**
+ * Solvency invariant check: share_vault.amount × cUSDC_rate >= total_user_shares × user_index +
+ * protocol_owed_underlying. Returns the spread (LHS - RHS) — must be ≥ 0.
+ */
+export async function assertYieldStrategySolvent(): Promise<bigint> {
+  const testbed = await getYieldBearingTestbed();
+  const strategy = await fetchYieldStrategy();
+  const shareVaultAcc = await getAccount(
+    provider.connection,
+    testbed.shareVault,
+    "confirmed"
+  );
+  const reserve: any = await (mockYieldProgram.account as any).reserve.fetch(
+    testbed.reserve
+  );
+  const totalUnderlying = BigInt(reserve.totalUnderlying.toString());
+  const shareMintInfo = await provider.connection.getTokenSupply(
+    testbed.shareMint
+  );
+  const supply = BigInt(shareMintInfo.value.amount);
+
+  // Convert share_vault's cUSDC into USDC at the current cUSDC ↔ USDC rate.
+  const shareVaultBalance = shareVaultAcc.amount;
+  const usdcBackedByVault =
+    supply === 0n ? 0n : (shareVaultBalance * totalUnderlying) / supply;
+
+  // Liabilities: user shares × user_index_q64 / 2^64.
+  const TWO_64 = 1n << 64n;
+  const userLiability =
+    (strategy.totalUserShares * strategy.userIndexQ64) / TWO_64;
+  const totalLiability = userLiability + strategy.protocolOwedUnderlying;
+
+  expect(
+    usdcBackedByVault >= totalLiability,
+    `solvency invariant broken: vault-backed=${usdcBackedByVault}, ` +
+      `liability=${totalLiability} ` +
+      `(userShares=${strategy.totalUserShares}, ` +
+      `userIndex=${strategy.userIndexQ64}, ` +
+      `protocolOwed=${strategy.protocolOwedUnderlying})`
+  ).to.be.true;
+
+  return usdcBackedByVault - totalLiability;
 }

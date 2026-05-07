@@ -7,8 +7,10 @@ VALIDATOR_BIN="${VALIDATOR_BIN:-$HOME/.local/share/solana/install/active_release
 RPC_URL="${ANCHOR_PROVIDER_URL:-http://127.0.0.1:8899}"
 WALLET="${ANCHOR_WALLET_LINUX:-$REPO_ROOT/keys/devnet-deployer.json}"
 PROGRAM_SO="${PROGRAM_SO:-$REPO_ROOT/target/deploy/agon_protocol.so}"
+MOCK_YIELD_SO="${MOCK_YIELD_SO:-$REPO_ROOT/target/deploy/mock_yield.so}"
 VALIDATOR_LOG="${VALIDATOR_LOG:-/tmp/agon-local-validator.log}"
 PROGRAM_ADDRESS="${PROGRAM_ADDRESS:-$(grep -m1 'declare_id!' "$REPO_ROOT/programs/agon-protocol/src/lib.rs" | sed -E 's/.*"([^"]+)".*/\1/')}"
+MOCK_YIELD_ADDRESS="${MOCK_YIELD_ADDRESS:-$(grep -m1 'declare_id!' "$REPO_ROOT/programs/mock-yield/src/lib.rs" | sed -E 's/.*"([^"]+)".*/\1/')}"
 
 if [[ ! -x "$SOLANA_BIN" ]]; then
   echo "solana binary not found at $SOLANA_BIN" >&2
@@ -30,12 +32,18 @@ if [[ ! -f "$PROGRAM_SO" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$MOCK_YIELD_SO" ]]; then
+  echo "mock-yield binary not found at $MOCK_YIELD_SO" >&2
+  exit 1
+fi
+
 pkill -f solana-test-validator >/dev/null 2>&1 || true
 pkill -f solana-faucet >/dev/null 2>&1 || true
 sleep 1
 nohup "$VALIDATOR_BIN" \
   --reset \
   --upgradeable-program "$PROGRAM_ADDRESS" "$PROGRAM_SO" "$WALLET" \
+  --upgradeable-program "$MOCK_YIELD_ADDRESS" "$MOCK_YIELD_SO" "$WALLET" \
   > "$VALIDATOR_LOG" 2>&1 &
 
 READY=0

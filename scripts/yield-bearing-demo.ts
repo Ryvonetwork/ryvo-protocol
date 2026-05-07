@@ -71,7 +71,9 @@ const RESERVE_SEED = Buffer.from("reserve");
 const SHARE_MINT_SEED = Buffer.from("share-mint");
 const LIQUIDITY_VAULT_SEED = Buffer.from("liquidity-vault");
 
-const AG_USDC_TOKEN_ID = 1;
+const USDC_TOKEN_ID = 1;
+const USDC_SYMBOL = "USDC";
+const AG_USDC_TOKEN_ID = 2;
 const AG_USDC_SYMBOL = "agUSDC";
 const PROTOCOL_YIELD_SHARE_BPS = 3_333; // ~33.33% of yield to protocol (6% gross → ~4% net for users).
 // Demo defaults — cranked up so visible yield accrues in <60s even with small balances.
@@ -369,6 +371,13 @@ function findShareMintPda(programId: PublicKey, underlyingMint: PublicKey): Publ
 function findLiquidityVaultPda(programId: PublicKey, underlyingMint: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync(
     [LIQUIDITY_VAULT_SEED, underlyingMint.toBuffer()],
+    programId
+  )[0];
+}
+
+function findVaultTokenAccountPda(programId: PublicKey, tokenId: number): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("vault-token-account"), u16Le(tokenId)],
     programId
   )[0];
 }
@@ -685,6 +694,36 @@ async function ensureProtocolInitialised(
     } as any)
     .rpc();
   console.log(`   ✓ GlobalConfig + TokenRegistry initialised.`);
+}
+
+async function ensureUsdcRegistered(
+  provider: anchor.AnchorProvider,
+  agon: Program<AgonProtocol>,
+  underlyingMint: PublicKey
+): Promise<void> {
+  const tokenRegistryPda = findTokenRegistryPda(agon.programId);
+  const vaultTokenAccount = findVaultTokenAccountPda(agon.programId, USDC_TOKEN_ID);
+
+  const existing = await provider.connection.getAccountInfo(vaultTokenAccount);
+  if (existing) {
+    console.log(
+      `🪙 Plain USDC (token_id=${USDC_TOKEN_ID}) already registered. Vault: ${vaultTokenAccount.toBase58()}`
+    );
+    return;
+  }
+
+  console.log(`🪙 Registering plain USDC as token_id=${USDC_TOKEN_ID}...`);
+  await agon.methods
+    .registerToken(USDC_TOKEN_ID, symbolBytes(USDC_SYMBOL))
+    .accounts({
+      mint: underlyingMint,
+      authority: provider.wallet.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      rent: SYSVAR_RENT_PUBKEY,
+    } as any)
+    .rpc();
+  console.log(`   ✓ Plain USDC vault: ${vaultTokenAccount.toBase58()}`);
 }
 
 async function ensureAgUsdcRegistered(
@@ -1029,6 +1068,8 @@ async function main(): Promise<void> {
     liquidityVault,
     cli.yieldBufferUsdc
   );
+  // v7: register plain USDC at token_id=1 BEFORE registering agUSDC at token_id=2.
+  await ensureUsdcRegistered(provider, agon, underlyingMint);
   const { yieldStrategy, shareVault } = await ensureAgUsdcRegistered(
     provider,
     agon,
@@ -1064,30 +1105,75 @@ async function main(): Promise<void> {
   const alice = await setupUser(provider, agon, underlyingMint, feeRecipient, "Alice", cli.perUserUsdc);
   const bob = await setupUser(provider, agon, underlyingMint, feeRecipient, "Bob", cli.perUserUsdc);
 
-  for (const user of [alice, bob]) {
-    console.log(`\n💸 ${user.label} deposits ${formatUsdc(cli.perUserUsdc)} USDC -> agUSDC...`);
-    await agon.methods
-      .depositYieldBearing(AG_USDC_TOKEN_ID, new anchor.BN(cli.perUserUsdc.toString()))
-      .accounts({
-        participantBucket: user.participantBucket,
-        ownerIndexBucket: user.ownerIndexBucket,
-        yieldProgram: mockYield.programId,
-        reserve,
-        underlyingMint,
-        shareMint,
-        liquidityVault,
-        shareVault,
-        depositorUnderlying: user.usdcAta,
-        depositor: user.keypair.publicKey,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      } as any)
-      .signers([user.keypair])
-      .rpc();
-    console.log(`   ✓ Deposit confirmed.`);
-  }
+  // Alice takes the atomic path: `deposit_yield_bearing` moves USDC from her wallet straight
+  // into agUSDC in one transaction.
+  console.log(
+    `\n💸 Alice (atomic path) deposits ${formatUsdc(cli.perUserUsdc)} USDC -> agUSDC via deposit_yield_bearing...`
+  );
+  await agon.methods
+    .depositYieldBearing(AG_USDC_TOKEN_ID, new anchor.BN(cli.perUserUsdc.toString()))
+    .accounts({
+      participantBucket: alice.participantBucket,
+      ownerIndexBucket: alice.ownerIndexBucket,
+      yieldProgram: mockYield.programId,
+      reserve,
+      underlyingMint,
+      shareMint,
+      liquidityVault,
+      shareVault,
+      depositorUnderlying: alice.usdcAta,
+      depositor: alice.keypair.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    } as any)
+    .signers([alice.keypair])
+    .rpc();
+  console.log(`   ✓ Alice deposit_yield_bearing confirmed.`);
+
+  // Bob takes the v7 two-step path: plain `deposit` then `opt_in_yield`. This demonstrates the
+  // optional yield-opt-in flow — useful when a user wants to start with plain USDC and only opt
+  // into yield later (e.g. after settling channels, or based on some external trigger).
+  console.log(
+    `\n💸 Bob (opt-in path) deposits ${formatUsdc(cli.perUserUsdc)} USDC -> plain USDC bucket via deposit...`
+  );
+  await agon.methods
+    .deposit(USDC_TOKEN_ID, new anchor.BN(cli.perUserUsdc.toString()))
+    .accounts({
+      participantBucket: bob.participantBucket,
+      ownerIndexBucket: bob.ownerIndexBucket,
+      ownerTokenAccount: bob.usdcAta,
+      vaultTokenAccount: findVaultTokenAccountPda(agon.programId, USDC_TOKEN_ID),
+      owner: bob.keypair.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    } as any)
+    .signers([bob.keypair])
+    .rpc();
+  console.log(`   ✓ Bob plain deposit confirmed (no yield yet).`);
+
+  console.log(
+    `\n🔁 Bob now opts that ${formatUsdc(cli.perUserUsdc)} USDC into yield via opt_in_yield...`
+  );
+  await agon.methods
+    .optInYield(USDC_TOKEN_ID, AG_USDC_TOKEN_ID, new anchor.BN(cli.perUserUsdc.toString()))
+    .accounts({
+      yieldStrategy,
+      plainVaultTokenAccount: findVaultTokenAccountPda(agon.programId, USDC_TOKEN_ID),
+      participantBucket: bob.participantBucket,
+      ownerIndexBucket: bob.ownerIndexBucket,
+      yieldProgram: mockYield.programId,
+      reserve,
+      underlyingMint,
+      shareMint,
+      liquidityVault,
+      shareVault,
+      owner: bob.keypair.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    } as any)
+    .signers([bob.keypair])
+    .rpc();
+  console.log(`   ✓ Bob opt_in_yield confirmed — Bob now holds agUSDC like Alice.`);
 
   await printSnapshot(
-    "after deposits",
+    "after deposits (Alice atomic + Bob opt-in)",
     agon,
     yieldStrategy,
     alice,
@@ -1158,6 +1244,96 @@ async function main(): Promise<void> {
     feeRecipientUsdcAta.address,
     shareVault
   );
+
+  // -------------------------------------------------------------------------
+  // 4.5. Demonstrate opt_out_yield -> opt_in_yield round-trip on Bob's bucket.
+  // -------------------------------------------------------------------------
+  // Bob opts a quarter of his agUSDC shares back to plain USDC, then opts back in. This proves
+  // both directions of v7's internal yield toggle work mid-flight, after yield has accrued. The
+  // round-trip leaves at most 1-lamport of dust in the share_vault per call (attributed to all
+  // users on the next accrual).
+  {
+    const balances = await readBucketBalanceForToken(
+      agon,
+      bob.participantBucket,
+      bob.participantId,
+      AG_USDC_TOKEN_ID
+    );
+    const quarterShares = balances.available / 4n;
+    if (quarterShares > 0n) {
+      console.log(
+        `\n--- Phase 4.5: opt_out_yield round-trip (Bob, ${quarterShares.toString()} agUSDC shares) ---`
+      );
+      await agon.methods
+        .optOutYield(
+          AG_USDC_TOKEN_ID,
+          USDC_TOKEN_ID,
+          new anchor.BN(quarterShares.toString())
+        )
+        .accounts({
+          yieldStrategy,
+          plainVaultTokenAccount: findVaultTokenAccountPda(agon.programId, USDC_TOKEN_ID),
+          participantBucket: bob.participantBucket,
+          ownerIndexBucket: bob.ownerIndexBucket,
+          yieldProgram: mockYield.programId,
+          reserve,
+          underlyingMint,
+          shareMint,
+          liquidityVault,
+          shareVault,
+          owner: bob.keypair.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        } as any)
+        .signers([bob.keypair])
+        .rpc();
+      console.log(`   ✓ Bob opt_out_yield confirmed (shares -> plain USDC bucket).`);
+
+      const plainAfterOptOut = await readBucketBalanceForToken(
+        agon,
+        bob.participantBucket,
+        bob.participantId,
+        USDC_TOKEN_ID
+      );
+      const optBackInAmount = plainAfterOptOut.available;
+      console.log(
+        `   Bob plain USDC bucket: avail=${formatUsdc(optBackInAmount)} USDC (will opt this all back into yield).`
+      );
+
+      await agon.methods
+        .optInYield(
+          USDC_TOKEN_ID,
+          AG_USDC_TOKEN_ID,
+          new anchor.BN(optBackInAmount.toString())
+        )
+        .accounts({
+          yieldStrategy,
+          plainVaultTokenAccount: findVaultTokenAccountPda(agon.programId, USDC_TOKEN_ID),
+          participantBucket: bob.participantBucket,
+          ownerIndexBucket: bob.ownerIndexBucket,
+          yieldProgram: mockYield.programId,
+          reserve,
+          underlyingMint,
+          shareMint,
+          liquidityVault,
+          shareVault,
+          owner: bob.keypair.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        } as any)
+        .signers([bob.keypair])
+        .rpc();
+      console.log(`   ✓ Bob opt_in_yield confirmed — back to agUSDC at the current index.`);
+
+      await printSnapshot(
+        "after Bob opt_out + opt_in round-trip",
+        agon,
+        yieldStrategy,
+        alice,
+        bob,
+        feeRecipientUsdcAta.address,
+        shareVault
+      );
+    }
+  }
 
   // -------------------------------------------------------------------------
   // 5. Protocol claims its fee

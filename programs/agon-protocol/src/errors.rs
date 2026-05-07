@@ -186,4 +186,8 @@ pub enum VaultError {
     /// Permanent: protocol_yield_share_bps exceeded the protocol-imposed cap.
     #[msg("Protocol yield share bps exceeds the maximum allowed value")]
     InvalidProtocolYieldShareBps,
+    /// Permanent: opt-in/opt-out attempted between a plain token and a yield-bearing token whose
+    /// underlying mints don't match (i.e. opting `USDT` into `agUSDC` would fail with this error).
+    #[msg("Plain token mint does not match the yield strategy's underlying mint")]
+    MismatchedYieldUnderlying,
 }

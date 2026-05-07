@@ -47,5 +47,5 @@ pub use update_config::UpdateConfig;
 pub use update_inbound_channel_policy::UpdateInboundChannelPolicy;
 pub use yield_bearing::{
     AccrueYield, ClaimProtocolYieldFee, DepositYieldBearing, ExecuteWithdrawalYieldBearing,
-    RegisterYieldBearingToken, RequestWithdrawalYieldBearing,
+    OptInYield, OptOutYield, RegisterYieldBearingToken, RequestWithdrawalYieldBearing,
 };
