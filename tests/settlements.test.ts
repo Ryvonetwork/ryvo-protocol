@@ -220,25 +220,20 @@ describe("Settle Individual", () => {
 
   it("should settle commitment bundle (many buyers -> one payee)", async () => {
     const payee = await createTestParticipant();
-    const payers = await Promise.all([
-      createPrimaryFundedParticipant(6_000_000),
-      createPrimaryFundedParticipant(6_000_000),
-    ]);
+    const payers = [
+      await createPrimaryFundedParticipant(6_000_000),
+      await createPrimaryFundedParticipant(6_000_000),
+    ];
     const deltas = [1_000_000, 1_500_000];
 
-    const channels = await Promise.all(
-      payers.map(async (payer) => {
-        const ensured = await ensureChannel(
-          payer.wallet,
-          payee.wallet.publicKey,
-          1
-        );
-        return {
-          payer,
-          ...ensured,
-        };
-      })
-    );
+    const channels = [];
+    for (const payer of payers) {
+      const ensured = await ensureChannel(payer.wallet, payee.wallet.publicKey, 1);
+      channels.push({
+        payer,
+        ...ensured,
+      });
+    }
 
     const payeeBefore = await fetchParticipant(payee.wallet.publicKey);
     const payerBalancesBefore = await Promise.all(

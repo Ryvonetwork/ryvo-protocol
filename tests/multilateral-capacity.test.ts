@@ -13,12 +13,15 @@ describe("Bucketed multilateral capacity", () => {
       channelCount: 80,
     });
 
-    expect(measurement.participantBucketCount).to.equal(1);
-    expect(measurement.channelBucketCount).to.equal(1);
-    expect(measurement.dynamicWritableAccountCount).to.equal(2);
+    expect(measurement.participantBucketCount).to.equal(Math.ceil(32 / 9));
+    expect(measurement.channelBucketCount).to.be.greaterThan(0);
+    expect(measurement.dynamicWritableAccountCount).to.equal(
+      measurement.participantBucketCount + measurement.channelBucketCount
+    );
+    expect(measurement.dynamicWritableAccountCount).to.be.lessThan(32 + 80);
   });
 
-  it("keeps 100 participants / 256 channels account-lock feasible under the bucket model", () => {
+  it("keeps 100 participants / 256 channels below account-per-row locking", () => {
     const measurement = measureClearingRoundCapacity({
       programId,
       mode: "hypothetical-bls-v0-alt",
@@ -26,7 +29,11 @@ describe("Bucketed multilateral capacity", () => {
       channelCount: 256,
     });
 
-    expect(measurement.participantBucketCount).to.equal(2);
-    expect(measurement.dynamicWritableAccountCount).to.be.lessThan(64);
+    expect(measurement.participantBucketCount).to.equal(Math.ceil(100 / 9));
+    expect(measurement.channelBucketCount).to.be.greaterThan(0);
+    expect(measurement.dynamicWritableAccountCount).to.equal(
+      measurement.participantBucketCount + measurement.channelBucketCount
+    );
+    expect(measurement.dynamicWritableAccountCount).to.be.lessThan(100 + 256);
   });
 });

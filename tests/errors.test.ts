@@ -144,7 +144,7 @@ describe("Negative tests - expect specific errors", () => {
           ])
           .signers([user1])
           .rpc(),
-      "ParticipantNotFound"
+      "BucketAccountMismatch"
     );
 
     await expectProgramError(
@@ -452,6 +452,18 @@ describe("Negative tests - expect specific errors", () => {
     const payer = await createTestParticipant();
     const payee = await createTestParticipant();
     const ensured = await ensureChannel(payer.wallet, payee.wallet.publicKey, 1);
+    const payerTokenAccount = await createFundedTokenAccount(
+      payer.wallet,
+      primaryMint,
+      1_000_000
+    );
+    await depositParticipantBalance({
+      owner: payer.wallet,
+      participantPda: payer.participantPda,
+      ownerTokenAccount: payerTokenAccount,
+      tokenId: 1,
+      amount: 1_000_000,
+    });
 
     const basePayload = {
       payerId: ensured.channel.payerId,

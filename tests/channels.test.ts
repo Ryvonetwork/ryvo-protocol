@@ -34,6 +34,17 @@ import {
 
 const SECOND_CHANNEL_TOKEN_ID = 13;
 
+function findChannelBucketPdaById(tokenId: number, bucketId: number): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("channel-bucket-v2"),
+      new anchor.BN(tokenId).toArrayLike(Buffer, "le", 2),
+      new anchor.BN(bucketId).toArrayLike(Buffer, "le", 8),
+    ],
+    program.programId
+  )[0];
+}
+
 async function depositToParticipant(
   owner: anchor.web3.Keypair,
   participantPda: PublicKey,
@@ -73,11 +84,7 @@ describe("Permanent Channel Lifecycle", () => {
 
   it("rejects self-channels for the same participant", async () => {
     const participant = await createTestParticipant();
-    const channelPda = findChannelPda(
-      participant.participant.participantId,
-      participant.participant.participantId,
-      1
-    );
+    const channelPda = findChannelBucketPdaById(1, 0);
 
     await expectProgramError(
       () =>
@@ -94,7 +101,9 @@ describe("Permanent Channel Lifecycle", () => {
             owner: participant.wallet.publicKey,
             payerBucket: participant.participantPda,
             payeeBucket: participant.participantPda,
-            ownerIndexBucket: findOwnerIndexBucketPda(participant.wallet.publicKey),
+            ownerIndexBucket: findOwnerIndexBucketPda(
+              participant.wallet.publicKey
+            ),
             payeeOwner: null,
             channelBucket: channelPda,
             systemProgram: SystemProgram.programId,
@@ -459,7 +468,7 @@ describe("Permanent Channel Lifecycle", () => {
     );
   });
 
-  it("fully drained pending unlock executes with zero release and clears pending state", async () => {
+  it("fully drained pending unlock is cleared by settlement and cannot execute", async () => {
     const payer = await createTestParticipant();
     const payee = await createTestParticipant();
     const ownerTokenAccount = await createFundedTokenAccount(
@@ -495,20 +504,23 @@ describe("Permanent Channel Lifecycle", () => {
       submitter: payee.wallet,
     });
 
-    await sleep(2500);
-
-    await executeUnlockChannelFundsForTest(ensured, payer.wallet);
-
-    const payerAfterExecute = await fetchParticipant(payer.wallet.publicKey);
-    const channelAfterExecute = await refetchDirectionalChannel(ensured);
+    const payerAfterSettlement = await fetchParticipant(payer.wallet.publicKey);
+    const channelAfterSettlement = await refetchDirectionalChannel(ensured);
 
     expect(
-      getTokenBalance(payerAfterExecute, 1).availableBalance.toNumber() -
+      getTokenBalance(payerAfterSettlement, 1).availableBalance.toNumber() -
         getTokenBalance(payerBeforeExecute, 1).availableBalance.toNumber()
     ).to.equal(0);
-    expect(channelAfterExecute.lockedBalance.toNumber()).to.equal(0);
-    expect(channelAfterExecute.pendingUnlockAmount.toNumber()).to.equal(0);
-    expect(channelAfterExecute.unlockRequestedAt.toNumber()).to.equal(0);
+    expect(channelAfterSettlement.lockedBalance.toNumber()).to.equal(0);
+    expect(channelAfterSettlement.pendingUnlockAmount.toNumber()).to.equal(0);
+    expect(channelAfterSettlement.unlockRequestedAt.toNumber()).to.equal(0);
+
+    await sleep(2500);
+
+    await expectProgramError(
+      () => executeUnlockChannelFundsForTest(ensured, payer.wallet),
+      "NoChannelUnlockPending"
+    );
   });
 
   it("rotates the authorized signer after the timelock and invalidates the old signer", async () => {

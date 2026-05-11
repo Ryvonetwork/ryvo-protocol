@@ -37,8 +37,8 @@ if [[ ! -f "$MOCK_YIELD_SO" ]]; then
   exit 1
 fi
 
-pkill -f solana-test-validator >/dev/null 2>&1 || true
-pkill -f solana-faucet >/dev/null 2>&1 || true
+pkill -f '[s]olana-test-validator .*--reset' >/dev/null 2>&1 || true
+pkill -f '[s]olana-faucet' >/dev/null 2>&1 || true
 sleep 1
 nohup "$VALIDATOR_BIN" \
   --reset \

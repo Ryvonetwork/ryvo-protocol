@@ -84,7 +84,7 @@ describe("Audit Regressions", () => {
           signer: user1,
           submitter: user4,
         }),
-      "BucketAccountMismatch"
+      "InvalidTokenMint"
     );
   });
 
@@ -360,7 +360,7 @@ describe("Audit Regressions", () => {
           } as any)
           .signers([payer.wallet])
           .rpc(),
-      "BucketAccountMismatch"
+      "InvalidTokenMint"
     );
 
     await program.methods

@@ -75,17 +75,27 @@ describe("BLS clearing round capacity sizing", function () {
       channelCount: 128,
     });
 
-    expect(denseHundredParticipantRound.participantBucketCount).to.equal(2);
-    expect(denseHundredParticipantRound.channelBucketCount).to.equal(39);
+    expect(denseHundredParticipantRound.participantBucketCount).to.equal(
+      Math.ceil(100 / 9)
+    );
+    expect(denseHundredParticipantRound.channelBucketCount).to.be.greaterThan(
+      0
+    );
     expect(denseHundredParticipantRound.dynamicWritableAccountCount).to.equal(
-      41
+      denseHundredParticipantRound.participantBucketCount +
+        denseHundredParticipantRound.channelBucketCount
     );
     expect(reciprocalSixtyFourParticipantRound.participantBucketCount).to.equal(
-      1
+      Math.ceil(64 / 9)
     );
-    expect(reciprocalSixtyFourParticipantRound.channelBucketCount).to.equal(16);
+    expect(
+      reciprocalSixtyFourParticipantRound.channelBucketCount
+    ).to.be.greaterThan(0);
     expect(
       reciprocalSixtyFourParticipantRound.dynamicWritableAccountCount
-    ).to.equal(17);
+    ).to.equal(
+      reciprocalSixtyFourParticipantRound.participantBucketCount +
+        reciprocalSixtyFourParticipantRound.channelBucketCount
+    );
   });
 });

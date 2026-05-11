@@ -10,11 +10,19 @@ npm-debug.log*
 package-lock.json
 yarn.lock
 # Deployment configurations (keep README and .gitkeep, ignore actual configs)
-config/
+config/*
 !config/README.md
 !config/.gitkeep
 
 # Keys (keep examples, ignore actual keys)
 keys/
+keys/colosseum-basic-devnet/
 .env
 logs/
+
+# Generated benchmark snapshots
+benchmarks/live/*.json
+benchmarks/synthetic/*.json
+
+# Superstack scratchpad
+.superstack/

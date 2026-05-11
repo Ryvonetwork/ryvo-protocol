@@ -1,21 +1,21 @@
 [toolchain]
-package_manager = "yarn"
+package_manager = "npm"
 
 [features]
 resolution = true
 skip-lint = false
 
 [programs.devnet]
-ryvo_protocol = "HuyQoYfBEvVACTKcq8RTiDFm5k5ZBnX5we1UjWBTBeqT"
-mock_yield = "AKimUnWF5CrWeA7XipX23vXCzdKfXGisR8C9cNuKtzGW"
+ryvo_protocol = "BGSG6gUuUa6SDVfbWB7VdQ2Sw1fBmyQwNX2ERQsk6iXS"
+mock_yield = "2AvcGb3Dp7vu6iiqK81LHXruZ64TSTWbqLUTbtnPGarY"
 
 [programs.localnet]
-ryvo_protocol = "HuyQoYfBEvVACTKcq8RTiDFm5k5ZBnX5we1UjWBTBeqT"
-mock_yield = "AKimUnWF5CrWeA7XipX23vXCzdKfXGisR8C9cNuKtzGW"
+ryvo_protocol = "BGSG6gUuUa6SDVfbWB7VdQ2Sw1fBmyQwNX2ERQsk6iXS"
+mock_yield = "2AvcGb3Dp7vu6iiqK81LHXruZ64TSTWbqLUTbtnPGarY"
 
 [programs.mainnet]
-ryvo_protocol = "HuyQoYfBEvVACTKcq8RTiDFm5k5ZBnX5we1UjWBTBeqT"
-mock_yield = "AKimUnWF5CrWeA7XipX23vXCzdKfXGisR8C9cNuKtzGW"
+ryvo_protocol = "BGSG6gUuUa6SDVfbWB7VdQ2Sw1fBmyQwNX2ERQsk6iXS"
+mock_yield = "2AvcGb3Dp7vu6iiqK81LHXruZ64TSTWbqLUTbtnPGarY"
 
 [registry]
 url = "https://api.apr.dev"
@@ -25,4 +25,4 @@ cluster = "https://devnet.helius-rpc.com/?api-key=3faa0eb3-3be2-42bd-8a96-cd7369
 wallet = "/home/heis/ryvo/ryvo-protocol/keys/devnet-deployer.json"
 
 [scripts]
-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
+test = "npm run test:shared"

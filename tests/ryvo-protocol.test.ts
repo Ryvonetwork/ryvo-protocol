@@ -29,3 +29,13 @@ import "./edge-cases.test";
 
 // Business logic edge cases
 import "./business-logic.test";
+
+// Audit regression coverage
+import "./audit-regressions.test";
+
+// BLS clearing coverage
+import "./bls-clearing-rounds.test";
+
+// Yield-bearing protocol coverage
+import "./yield-bearing-clearing.test";
+import "./yield-bearing-opt-in-out.test";

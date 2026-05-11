@@ -32,7 +32,7 @@ use instructions::update_config::*;
 use instructions::update_inbound_channel_policy::*;
 use instructions::yield_bearing::*;
 
-declare_id!("HuyQoYfBEvVACTKcq8RTiDFm5k5ZBnX5we1UjWBTBeqT");
+declare_id!("BGSG6gUuUa6SDVfbWB7VdQ2Sw1fBmyQwNX2ERQsk6iXS");
 
 #[cfg(feature = "custom-heap")]
 solana_allocator::custom_heap!();
