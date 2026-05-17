@@ -317,6 +317,7 @@ type ClearingRoundPayloadPreview = {
 type ScenarioSignatureMap = {
   singleCommitment: string;
   batchCommitment: string;
+  atomicRoutedClearing: string;
   blsMaxParticipantsClearing: string;
   blsMaxChannelsClearing?: string;
 };
@@ -1566,6 +1567,9 @@ function buildClearingRoundPayloadPreview(params: {
   version?: number;
   aggregateSignature?: Buffer | Uint8Array;
 }): ClearingRoundPayloadPreview {
+  const activeBlocks = params.blocks.filter(
+    (block) => block.entries.length > 0
+  );
   const message = createClearingRoundMessage({
     tokenId: params.tokenId,
     messageDomain: params.messageDomain,
@@ -1590,7 +1594,7 @@ function buildClearingRoundPayloadPreview(params: {
       (sum, block) => sum + block.entries.length,
       0
     ),
-    cosignedBy: params.blocks.map((block) => block.participant.name),
+    cosignedBy: activeBlocks.map((block) => block.participant.name),
     participantBlocks: params.blocks.map((block) => ({
       participant: block.participant.name,
       participantId: block.participant.participantId,
@@ -1606,7 +1610,7 @@ function buildClearingRoundPayloadPreview(params: {
     })),
     signatures: params.aggregateSignature
       ? [trimHex(`0x${Buffer.from(params.aggregateSignature).toString("hex")}`)]
-      : params.blocks.map((block) =>
+      : activeBlocks.map((block) =>
           trimHex(
             `0x${signEd25519Message(
               message,
@@ -4159,6 +4163,57 @@ async function ensureChannel(
   return channelPda;
 }
 
+async function ensureLockedChannelFunds(
+  program: Program<RyvoProtocol>,
+  payer: DemoWallet,
+  payee: DemoWallet,
+  tokenId: number,
+  channelPda: PublicKey,
+  targetLockedRaw: number,
+  tokenSymbol: string,
+  decimals: number
+): Promise<void> {
+  const channel = await fetchDirectionalChannelState(
+    program,
+    channelPda,
+    payer.participantId,
+    payee.participantId
+  );
+  const currentLocked = channel.lockedBalance.toNumber();
+  if (currentLocked >= targetLockedRaw) {
+    logStep(
+      `${payer.name}->${payee.name} already has ${formatAmount(
+        currentLocked,
+        decimals
+      )} ${tokenSymbol} locked`
+    );
+    return;
+  }
+
+  const lockDelta = targetLockedRaw - currentLocked;
+  const signature = await program.methods
+    .lockChannelFunds(tokenId, payee.participantId, new anchor.BN(lockDelta))
+    .accounts({
+      tokenRegistry: findTokenRegistryPda(program.programId),
+      payerBucket: payer.participantPda,
+      channelBucket: channelPda,
+      ownerIndexBucket: findOwnerIndexBucketPda(
+        program.programId,
+        payer.keypair.publicKey
+      ),
+      owner: payer.keypair.publicKey,
+      systemProgram: SystemProgram.programId,
+    } as any)
+    .signers([payer.keypair])
+    .rpc();
+  logStep(
+    `${payer.name} locked ${formatAmount(
+      lockDelta,
+      decimals
+    )} ${tokenSymbol} into ${payer.name}->${payee.name} (${signature})`
+  );
+}
+
 async function logScenarioEvents(
   provider: anchor.AnchorProvider,
   program: Program<RyvoProtocol>,
@@ -4554,6 +4609,276 @@ async function runBatchCommitmentScenario(
   };
 }
 
+async function runAtomicRoutedClearingScenario(
+  provider: anchor.AnchorProvider,
+  program: Program<RyvoProtocol>,
+  messageDomain: Buffer,
+  tokenId: number,
+  tokenSymbol: string,
+  decimals: number,
+  payer: DemoWallet,
+  middleman: DemoWallet,
+  recipient: DemoWallet,
+  routeAmount: number,
+  vaultTokenAccount: PublicKey
+): Promise<ScenarioResult> {
+  logSection("Scenario 3/6 - Atomic Routed BLS Clearing");
+  const routeRaw = toRawAmount(routeAmount, decimals);
+  await ensureMinimumInternalBalances(
+    program,
+    [payer],
+    tokenId,
+    tokenSymbol,
+    decimals,
+    vaultTokenAccount,
+    new Map([[payer.participantId, routeRaw]])
+  );
+
+  const payerToMiddlePda = await ensureChannel(
+    program,
+    payer,
+    middleman,
+    tokenId
+  );
+  await ensureLockedChannelFunds(
+    program,
+    payer,
+    middleman,
+    tokenId,
+    payerToMiddlePda,
+    routeRaw,
+    tokenSymbol,
+    decimals
+  );
+  const middleToRecipientPda = await ensureChannel(
+    program,
+    middleman,
+    recipient,
+    tokenId
+  );
+
+  const payerToMiddleBefore = await fetchDirectionalChannelState(
+    program,
+    payerToMiddlePda,
+    payer.participantId,
+    middleman.participantId
+  );
+  const middleToRecipientBefore = await fetchDirectionalChannelState(
+    program,
+    middleToRecipientPda,
+    middleman.participantId,
+    recipient.participantId
+  );
+  const balancesBefore = await Promise.all(
+    [payer, middleman, recipient].map((wallet) =>
+      fetchInternalBalance(program, wallet, tokenId)
+    )
+  );
+
+  const roundBlocks: ClearingRoundPreviewBlockInput[] = [
+    {
+      participant: payer,
+      entries: [
+        {
+          payeeRef: 1,
+          payee: middleman,
+          targetCumulative:
+            payerToMiddleBefore.settledCumulative.toNumber() + routeRaw,
+        },
+      ],
+    },
+    {
+      participant: middleman,
+      entries: [
+        {
+          payeeRef: 2,
+          payee: recipient,
+          targetCumulative:
+            middleToRecipientBefore.settledCumulative.toNumber() + routeRaw,
+        },
+      ],
+    },
+    {
+      participant: recipient,
+      entries: [],
+    },
+  ];
+  const message = createClearingRoundMessage({
+    tokenId,
+    messageDomain,
+    version: BLS_CLEARING_ROUND_MESSAGE_VERSION,
+    blocks: roundBlocks.map((block) => ({
+      participantId: block.participant.participantId,
+      entries: block.entries.map((entry) => ({
+        payeeRef: entry.payeeRef,
+        targetCumulative: entry.targetCumulative,
+      })),
+    })),
+  });
+  const aggregateSignatureCompressed = aggregateBlsSignatures(
+    [payer, middleman].map((wallet) => signBlsMessage(wallet, message))
+  );
+  const clearingRoundPreview = buildClearingRoundPayloadPreview({
+    messageDomain,
+    tokenId,
+    tokenSymbol,
+    decimals,
+    blocks: roundBlocks,
+    version: BLS_CLEARING_ROUND_MESSAGE_VERSION,
+    aggregateSignature: aggregateSignatureCompressed,
+  });
+  const remainingAccounts = [
+    ...uniqueWritableMetasForPubkeys([
+      payer.participantPda,
+      middleman.participantPda,
+      recipient.participantPda,
+    ]),
+    ...uniqueWritableMetasForPubkeys([payerToMiddlePda, middleToRecipientPda]),
+  ];
+  const signature = await program.methods
+    .settleClearingRound(message, [...aggregateSignatureCompressed])
+    .accounts({
+      tokenRegistry: findTokenRegistryPda(program.programId),
+      globalConfig: findGlobalConfigPda(program.programId),
+      submitter: middleman.keypair.publicKey,
+      instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
+    } as any)
+    .remainingAccounts(remainingAccounts)
+    .preInstructions([
+      ComputeBudgetProgram.requestHeapFrame({
+        bytes: 256 * 1024,
+      }),
+      ComputeBudgetProgram.setComputeUnitLimit({
+        units: DEFAULT_BLS_COMPUTE_UNIT_LIMIT,
+      }),
+    ])
+    .signers([middleman.keypair])
+    .rpc();
+
+  const serializedTxBytes = await fetchSerializedTransactionBytes(
+    provider.connection,
+    signature
+  );
+  const balancesAfter = await Promise.all(
+    [payer, middleman, recipient].map((wallet) =>
+      fetchInternalBalance(program, wallet, tokenId)
+    )
+  );
+  const payerToMiddleAfter = await fetchDirectionalChannelState(
+    program,
+    payerToMiddlePda,
+    payer.participantId,
+    middleman.participantId
+  );
+  const middleToRecipientAfter = await fetchDirectionalChannelState(
+    program,
+    middleToRecipientPda,
+    middleman.participantId,
+    recipient.participantId
+  );
+
+  if (balancesAfter[1].available !== balancesBefore[1].available) {
+    throw new Error(
+      "Atomic routed clearing invariant failed: middleman internal balance changed"
+    );
+  }
+  if (balancesAfter[2].available - balancesBefore[2].available !== routeRaw) {
+    throw new Error(
+      "Atomic routed clearing invariant failed: recipient did not receive the routed amount"
+    );
+  }
+
+  logStep(
+    `${payer.name} routed ${formatAmount(
+      routeRaw,
+      decimals
+    )} ${tokenSymbol} to ${recipient.name} through ${middleman.name}`
+  );
+  logStep(
+    `${payer.name} and ${middleman.name} signed the same clearing-round message; ${recipient.name} only received`
+  );
+  logStep(
+    `${middleman.name} did not pre-lock liquidity to ${recipient.name}; the incoming and outgoing legs netted atomically in one settlement`
+  );
+  logClearingRoundPayloadPreview(clearingRoundPreview);
+  logStep(
+    `  ${payer.name} internal: ${formatAmount(
+      balancesBefore[0].available,
+      decimals
+    )} -> ${formatAmount(balancesAfter[0].available, decimals)}`
+  );
+  logStep(
+    `  ${middleman.name} internal: ${formatAmount(
+      balancesBefore[1].available,
+      decimals
+    )} -> ${formatAmount(balancesAfter[1].available, decimals)}`
+  );
+  logStep(
+    `  ${recipient.name} internal: ${formatAmount(
+      balancesBefore[2].available,
+      decimals
+    )} -> ${formatAmount(balancesAfter[2].available, decimals)}`
+  );
+  logStep(
+    `  ${payer.name}->${middleman.name} settled cumulative: ${formatAmount(
+      payerToMiddleBefore.settledCumulative.toNumber(),
+      decimals
+    )} -> ${formatAmount(
+      payerToMiddleAfter.settledCumulative.toNumber(),
+      decimals
+    )}; locked: ${formatAmount(
+      payerToMiddleBefore.lockedBalance.toNumber(),
+      decimals
+    )} -> ${formatAmount(
+      payerToMiddleAfter.lockedBalance.toNumber(),
+      decimals
+    )}`
+  );
+  logStep(
+    `  ${middleman.name}->${recipient.name} settled cumulative: ${formatAmount(
+      middleToRecipientBefore.settledCumulative.toNumber(),
+      decimals
+    )} -> ${formatAmount(
+      middleToRecipientAfter.settledCumulative.toNumber(),
+      decimals
+    )}; locked: ${formatAmount(
+      middleToRecipientBefore.lockedBalance.toNumber(),
+      decimals
+    )} -> ${formatAmount(
+      middleToRecipientAfter.lockedBalance.toNumber(),
+      decimals
+    )}`
+  );
+  logSavingsComparison(2, 1, "1 atomic routed clearing round");
+  logStep(`  Explorer: ${explorerUrl(signature)}`);
+  await logScenarioEvents(provider, program, signature);
+
+  return {
+    primarySignature: signature,
+    benchmark: createBenchmarkScenario({
+      id: "atomicRoutedClearing",
+      title: "Scenario 3/6 - Atomic Routed BLS Clearing",
+      settlementMode: "atomic-routed-clearing",
+      participantCount: 3,
+      channelCount: 2,
+      underlyingPaymentCount: 2,
+      grossValueRaw: routeRaw * 2,
+      decimals,
+      tokenSymbol,
+      signatures: [signature],
+      serializedTransactionBytes: [serializedTxBytes],
+      signedMessageBytes: message.length,
+      signatureCount: 1,
+      participantBalanceWrites: 1,
+      channelLaneWrites: 2,
+      notes: [
+        "Only the buyer and middleman sign because they have outgoing channel entries; the final recipient is passive.",
+        "The middleman channel to the final recipient advances without pre-locked collateral because the incoming leg covers the outgoing leg in the same atomic round.",
+      ],
+    }),
+  };
+}
+
 async function runMultilateralClearingScenario(
   provider: anchor.AnchorProvider,
   program: Program<RyvoProtocol>,
@@ -4704,8 +5029,13 @@ async function runMultilateralClearingScenario(
         })),
       })),
     });
+    const activeRoundParticipants = candidateRoundBlocks
+      .filter((block) => block.entries.length > 0)
+      .map((block) => block.participant);
     const aggregateSignatureCompressed = aggregateBlsSignatures(
-      participants.map((participant) => signBlsMessage(participant, message))
+      activeRoundParticipants.map((participant) =>
+        signBlsMessage(participant, message)
+      )
     );
     const participantBucketAccounts = uniqueWritableMetasForPubkeys(
       participants.map((participant) => participant.participantPda)
@@ -5013,7 +5343,9 @@ async function runMultilateralClearingScenario(
       requestedShape,
       achievedShape,
       notes: [
-        `BLS aggregated ${participants.length} participant cosignatures into one on-chain signature envelope.`,
+        `BLS aggregated ${
+          roundBlocks.filter((block) => block.entries.length > 0).length
+        } active participant cosignatures into one on-chain signature envelope.`,
         "Channel-state writes still scale with included channels, so BLS mostly expands the byte budget rather than removing per-channel work.",
       ],
     }),
@@ -5421,8 +5753,11 @@ async function prepareMultilateralRound(
       })),
     })),
   });
+  const activeRoundParticipants = roundBlocks
+    .filter((block) => block.entries.length > 0)
+    .map((block) => block.participant);
   const aggregateSignatureCompressed = aggregateBlsSignatures(
-    selection.participants.map((participant) =>
+    activeRoundParticipants.map((participant) =>
       signBlsMessage(participant, message)
     )
   );
@@ -6035,7 +6370,10 @@ async function submitMultilateralScenario(
       },
       achievedShape: attempt.candidate,
       notes: [
-        `BLS aggregated ${preparedRound.participants.length} participant cosignatures into one on-chain signature envelope.`,
+        `BLS aggregated ${
+          preparedRound.roundBlocks.filter((block) => block.entries.length > 0)
+            .length
+        } active participant cosignatures into one on-chain signature envelope.`,
         `Dense-graph search results were appended to ${context.resultsLogPath}.`,
       ],
     }),
@@ -6472,6 +6810,19 @@ async function main(): Promise<void> {
     options.batchCommitmentAmount,
     options.batchCommitmentLogEvery
   );
+  const atomicRoutedScenario = await runAtomicRoutedClearingScenario(
+    provider,
+    program,
+    readiness.messageDomain,
+    options.tokenId,
+    options.tokenSymbol,
+    readiness.decimals,
+    wallets[3],
+    wallets[4],
+    wallets[5],
+    1,
+    readiness.vaultTokenAccount
+  );
   const multilateralSearchContext = await prepareMultilateralSearchContext(
     provider,
     program,
@@ -6510,12 +6861,14 @@ async function main(): Promise<void> {
   const benchmarkScenarios = [
     singleScenario.benchmark,
     batchScenario.benchmark,
+    atomicRoutedScenario.benchmark,
     blsMaxParticipantsScenario.benchmark,
     ...(blsMaxChannelsScenario ? [blsMaxChannelsScenario.benchmark] : []),
   ];
   const scenarioSignatures: ScenarioSignatureMap = {
     singleCommitment: singleScenario.primarySignature,
     batchCommitment: batchScenario.primarySignature,
+    atomicRoutedClearing: atomicRoutedScenario.primarySignature,
     blsMaxParticipantsClearing: blsMaxParticipantsScenario.primarySignature,
     ...(blsMaxChannelsScenario
       ? { blsMaxChannelsClearing: blsMaxChannelsScenario.primarySignature }

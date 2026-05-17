@@ -1,17 +1,17 @@
 {
-  "generatedAt": "2026-05-10T20:30:33.446Z",
+  "generatedAt": "2026-05-16T18:38:21.234Z",
   "network": "devnet",
-  "rpcUrl": "https://api.devnet.solana.com",
+  "rpcUrl": "https://devnet.helius-rpc.com/",
   "program": {
-    "ryvoProtocol": "BGSG6gUuUa6SDVfbWB7VdQ2Sw1fBmyQwNX2ERQsk6iXS",
-    "mockYield": "2AvcGb3Dp7vu6iiqK81LHXruZ64TSTWbqLUTbtnPGarY",
-    "globalConfig": "8bRFnSJh5n1GyriPondxyVjJ8ByWxwHM42Ldo6wqxCTH",
-    "tokenRegistry": "8KZJSVXa3rbn3QLGqogfMK7UsbBzjn349XMyA6Eac3TB",
+    "ryvoProtocol": "GNZ4upG1xGRGxXUUNtKgRqFtfvNQ3JCWXr1FFj51HedJ",
+    "mockYield": "916FRevu6HadFHTDi8hV5tCXmJiJDTbADJRx5hQjKDcD",
+    "globalConfig": "7ZRtxfePPESn5BfQtATKMjFYs41BNFY6XVxxVMibrKUw",
+    "tokenRegistry": "SBKBPkECgDmXnuSD312GyQRP4bTgDSdn5YDPe11FoUP",
     "authority": "9418vqXsaVbwUEP5q8FGtRxEtzrDgDc2ECfHrWWthvPQ",
     "feeRecipient": "9418vqXsaVbwUEP5q8FGtRxEtzrDgDc2ECfHrWWthvPQ",
     "chainId": 1,
-    "messageDomain": "1dcb24313c53b284f7d79b2fb5e85d5c",
-    "nextParticipantId": 33
+    "messageDomain": "d067e43ee1697c81de5f82189380ef7f",
+    "nextParticipantId": 39
   },
   "wallets": {
     "keysDirectory": "keys/colosseum-basic-devnet",
@@ -22,9 +22,9 @@
       "keypairPath": "keys/colosseum-basic-devnet/merchant.json",
       "publicKey": "5HNbDDwAWmdmrDSCtdHt5MMozyRtNx3ntz8yQBqjY3av",
       "participantId": 0,
-      "participantBucket": "9f5iERyvsqNyk65GWcUYstudwwv6V931SecWgoU1GCWp",
+      "participantBucket": "981iAJhRgj4XCgUV9f7EfokQXPtdcUh1qGyWpMSApDNm",
       "participantBucketId": 0,
-      "ownerIndexBucket": "6Gwp6vsUVj4A7KCR1V3AY9dBbBa5J7zKLBQHnHkq6cX7",
+      "ownerIndexBucket": "5x4d9z89xCC7B39y83EBMURw6tNLZbanBJ1cdHHiXPYX",
       "ownerIndexBucketId": 969
     },
     "participants": [
@@ -34,9 +34,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-01.json",
         "publicKey": "4cVLgrgrRpwC4JYbGhQ8EDoWQRpdTnGUzjgCr2p5xKGL",
         "participantId": 1,
-        "participantBucket": "9f5iERyvsqNyk65GWcUYstudwwv6V931SecWgoU1GCWp",
+        "participantBucket": "981iAJhRgj4XCgUV9f7EfokQXPtdcUh1qGyWpMSApDNm",
         "participantBucketId": 0,
-        "ownerIndexBucket": "GBBAZxJAufDHSXXnodamAdmY19ouZ3j5wGYWVPNueK1x",
+        "ownerIndexBucket": "DNGSUx9pPtppwCoVgzVogz83tmc21he8SpTCuezrBkoE",
         "ownerIndexBucketId": 305
       },
       {
@@ -45,9 +45,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-02.json",
         "publicKey": "BMAWCAKWt1HZFpz3Kb5fgXtSTt26LgRn4zcBNheacXF4",
         "participantId": 2,
-        "participantBucket": "9f5iERyvsqNyk65GWcUYstudwwv6V931SecWgoU1GCWp",
+        "participantBucket": "981iAJhRgj4XCgUV9f7EfokQXPtdcUh1qGyWpMSApDNm",
         "participantBucketId": 0,
-        "ownerIndexBucket": "ACWF9X3XZEKmxuyArXPqrboi63MdyGeefxn6g8RFqGRV",
+        "ownerIndexBucket": "GaBqQ58CD8F8gjrdPPPG3UgV32w3tnECXkK8zCs3GPxM",
         "ownerIndexBucketId": 454
       },
       {
@@ -56,9 +56,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-03.json",
         "publicKey": "7cA1i1yjsYJNV9Jd1rRNjU96oiH7HanPuGvvhHu9H424",
         "participantId": 3,
-        "participantBucket": "9f5iERyvsqNyk65GWcUYstudwwv6V931SecWgoU1GCWp",
+        "participantBucket": "981iAJhRgj4XCgUV9f7EfokQXPtdcUh1qGyWpMSApDNm",
         "participantBucketId": 0,
-        "ownerIndexBucket": "7qnCvRcFvZTaPqJrSKCcEKoofMTj2ra1bgWg6JAbDBFv",
+        "ownerIndexBucket": "DqzyVxPJaUUDE3U4CFwTQLsQ8vkkMFzaYg6gWw9bKXos",
         "ownerIndexBucketId": 146
       },
       {
@@ -67,9 +67,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-04.json",
         "publicKey": "BxZG5cFygx4SFkQRAzuofL7tgP9ZyJmQRFjxx76UWRhT",
         "participantId": 4,
-        "participantBucket": "9f5iERyvsqNyk65GWcUYstudwwv6V931SecWgoU1GCWp",
+        "participantBucket": "981iAJhRgj4XCgUV9f7EfokQXPtdcUh1qGyWpMSApDNm",
         "participantBucketId": 0,
-        "ownerIndexBucket": "3EuMNkxEr84kmS1xkhjjbAH7mn37vmRht2ZVfdgrHXUc",
+        "ownerIndexBucket": "5nw5xGZGuQ8gKJUe2cggq7n8wLCnmNMXNJH3SwDzj7hU",
         "ownerIndexBucketId": 791
       },
       {
@@ -78,9 +78,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-05.json",
         "publicKey": "8kVHLzvuAWxrMRbXQbv3nBfPhhjfu3xemMCrfPndojC1",
         "participantId": 5,
-        "participantBucket": "9f5iERyvsqNyk65GWcUYstudwwv6V931SecWgoU1GCWp",
+        "participantBucket": "981iAJhRgj4XCgUV9f7EfokQXPtdcUh1qGyWpMSApDNm",
         "participantBucketId": 0,
-        "ownerIndexBucket": "GKbp2DZUWbZfFJXRpJzM7YyXUnPUdfiFgmzSppmVh3n2",
+        "ownerIndexBucket": "aZutnC27bPfNncVy3dRb7XiiZJcaGiDAHdrJwyL4YVT",
         "ownerIndexBucketId": 265
       },
       {
@@ -89,9 +89,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-06.json",
         "publicKey": "CrsCmTXUXUtNDTYGW51xu5v72jHKstqCWtMuC7mLEdz1",
         "participantId": 6,
-        "participantBucket": "9f5iERyvsqNyk65GWcUYstudwwv6V931SecWgoU1GCWp",
+        "participantBucket": "981iAJhRgj4XCgUV9f7EfokQXPtdcUh1qGyWpMSApDNm",
         "participantBucketId": 0,
-        "ownerIndexBucket": "DX7GHdX4RYrxt2vwXDSv1oi5Dviks84kHh81J9YF4tw1",
+        "ownerIndexBucket": "6AFU5Z6n9KMA87tv39byjBgHhUnnimgHY8VrgTU4hxr9",
         "ownerIndexBucketId": 832
       },
       {
@@ -100,9 +100,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-07.json",
         "publicKey": "DBBKdm4fFHBn6JD5tKAC3NeMuF6xaqhTYCUetpMeWLcK",
         "participantId": 7,
-        "participantBucket": "9f5iERyvsqNyk65GWcUYstudwwv6V931SecWgoU1GCWp",
+        "participantBucket": "981iAJhRgj4XCgUV9f7EfokQXPtdcUh1qGyWpMSApDNm",
         "participantBucketId": 0,
-        "ownerIndexBucket": "6nAN3ATeGDaMiWdcY6NBy1AzsfeaAUHQ9AwARi29g5qc",
+        "ownerIndexBucket": "CnkYq3vfeQdE25JZLkFTjEP2zKFBmpJp4ykDKpHe38Gr",
         "ownerIndexBucketId": 129
       },
       {
@@ -111,9 +111,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-08.json",
         "publicKey": "2SNo2xUKXD8Rk2dBgj1NDAHJ36u9qTC4qJctHDsEoen3",
         "participantId": 8,
-        "participantBucket": "9f5iERyvsqNyk65GWcUYstudwwv6V931SecWgoU1GCWp",
+        "participantBucket": "981iAJhRgj4XCgUV9f7EfokQXPtdcUh1qGyWpMSApDNm",
         "participantBucketId": 0,
-        "ownerIndexBucket": "8ofh8ZCNefGY5tLLcWuVvNKmz1xRYx9LmE8fBbmEN4v5",
+        "ownerIndexBucket": "3q6qX5QAsqp7Uisn73Dye1kiVScijmwPSYwe3UMnVk1f",
         "ownerIndexBucketId": 651
       },
       {
@@ -122,9 +122,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-09.json",
         "publicKey": "9vQ3rDKBGEA8wwBo7kTYUrYSEQGP8czXSMuad8U6twYC",
         "participantId": 9,
-        "participantBucket": "EoaSKqGdmDJdkpVRVMxAkeXAyLiXUiu3tbjEL79MyXq1",
+        "participantBucket": "E8LkaDgiqNKWHhaTsv4aQYpTaVqv8q2bts8gB2wZqKSg",
         "participantBucketId": 1,
-        "ownerIndexBucket": "FJLUxuymH3GhoPdE56CMyDnQ2EUcpeTg6ziBXeGwVX3V",
+        "ownerIndexBucket": "GUwvxuCtEgkoeQmmojwT8gjy4mMfkwPo53g2WWNAD3QJ",
         "ownerIndexBucketId": 523
       },
       {
@@ -133,9 +133,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-10.json",
         "publicKey": "G1TN6o9khBdXEEwyQCbsFS8oo8xVsGZGPL4DpU1L6MR3",
         "participantId": 10,
-        "participantBucket": "EoaSKqGdmDJdkpVRVMxAkeXAyLiXUiu3tbjEL79MyXq1",
+        "participantBucket": "E8LkaDgiqNKWHhaTsv4aQYpTaVqv8q2bts8gB2wZqKSg",
         "participantBucketId": 1,
-        "ownerIndexBucket": "C8XWH3Lae2Mo1VP1oMg7GV5STwoLLnSRyWf7nT6Xw1AE",
+        "ownerIndexBucket": "DuJ5TbWg4UpEA26P9qV1ZcRL4XcZn5oS2RZUvHunmpR4",
         "ownerIndexBucketId": 642
       },
       {
@@ -144,9 +144,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-11.json",
         "publicKey": "45WMxdUonFcnwJqXboWvjrq53inWbfYLSNvpWoNqwbqk",
         "participantId": 11,
-        "participantBucket": "EoaSKqGdmDJdkpVRVMxAkeXAyLiXUiu3tbjEL79MyXq1",
+        "participantBucket": "E8LkaDgiqNKWHhaTsv4aQYpTaVqv8q2bts8gB2wZqKSg",
         "participantBucketId": 1,
-        "ownerIndexBucket": "BTZri8BDLRXwXCPznWP1n1wEwcM9vypktw5Xjec3uG1m",
+        "ownerIndexBucket": "APnPBx36gbdVoHk8YG7nCen2LSYMF4rhzxJizfSuyEmp",
         "ownerIndexBucketId": 915
       },
       {
@@ -155,9 +155,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-12.json",
         "publicKey": "6Wikc37teyWBe5N979bRdtofAyNZSMSsDcUGzXfsmDSi",
         "participantId": 12,
-        "participantBucket": "EoaSKqGdmDJdkpVRVMxAkeXAyLiXUiu3tbjEL79MyXq1",
+        "participantBucket": "E8LkaDgiqNKWHhaTsv4aQYpTaVqv8q2bts8gB2wZqKSg",
         "participantBucketId": 1,
-        "ownerIndexBucket": "sXnLcewWQf7mtAptmeoMsCuXqB1tuEw9iP7z3ursHgw",
+        "ownerIndexBucket": "CSbgyYn3yDJgfs2AVPThisLh6zKXwKTPdxy3inw4V2Ps",
         "ownerIndexBucketId": 212
       },
       {
@@ -166,9 +166,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-13.json",
         "publicKey": "5KjnDkyMMBngFy8uZG9b92Bn1bevADSfAyQzxzutzqMS",
         "participantId": 13,
-        "participantBucket": "EoaSKqGdmDJdkpVRVMxAkeXAyLiXUiu3tbjEL79MyXq1",
+        "participantBucket": "E8LkaDgiqNKWHhaTsv4aQYpTaVqv8q2bts8gB2wZqKSg",
         "participantBucketId": 1,
-        "ownerIndexBucket": "5mbScwdieMDNWBX8By2rcVVk6YHAo8WzMGfyurxHPGKh",
+        "ownerIndexBucket": "5JCyfTbBJpFvfXVpi9A4GxRQruedFePhvSBANJcbVjoh",
         "ownerIndexBucketId": 476
       },
       {
@@ -177,9 +177,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-14.json",
         "publicKey": "LhUnpztAEVPLpLV42BXCdofE6okpN4rTtPGAA4U7HuA",
         "participantId": 14,
-        "participantBucket": "EoaSKqGdmDJdkpVRVMxAkeXAyLiXUiu3tbjEL79MyXq1",
+        "participantBucket": "E8LkaDgiqNKWHhaTsv4aQYpTaVqv8q2bts8gB2wZqKSg",
         "participantBucketId": 1,
-        "ownerIndexBucket": "EsXxRLYeeeGcGUY3FTVCrDm4Est521UbNVSGKacFnhSB",
+        "ownerIndexBucket": "7L9c9Godj6zPV2acekvevTnz21gmnKaKbJ6rH7xMymzM",
         "ownerIndexBucketId": 495
       },
       {
@@ -188,9 +188,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-15.json",
         "publicKey": "5dKhEueLRz9MCQ13K9he5AxVFrNVCbqZm6R9W9SYPYP5",
         "participantId": 15,
-        "participantBucket": "EoaSKqGdmDJdkpVRVMxAkeXAyLiXUiu3tbjEL79MyXq1",
+        "participantBucket": "E8LkaDgiqNKWHhaTsv4aQYpTaVqv8q2bts8gB2wZqKSg",
         "participantBucketId": 1,
-        "ownerIndexBucket": "9UNnLzNfbBK5L5eFnbWQoj7xJUofoG548B7we8kjzFT",
+        "ownerIndexBucket": "AC1diuHGWUs4eYt1x2MMdCgLLpGkjp8wre6aGdDuGR97",
         "ownerIndexBucketId": 668
       },
       {
@@ -199,9 +199,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-16.json",
         "publicKey": "6mzEmWkjHX6DhMjpvjJo4egqPMTW4BKvFSDauqNjngtj",
         "participantId": 16,
-        "participantBucket": "EoaSKqGdmDJdkpVRVMxAkeXAyLiXUiu3tbjEL79MyXq1",
+        "participantBucket": "E8LkaDgiqNKWHhaTsv4aQYpTaVqv8q2bts8gB2wZqKSg",
         "participantBucketId": 1,
-        "ownerIndexBucket": "E6bFJcs8WzkFa5U4o2oFBv2Tb2N1Xk73GsiYKUBXjgvH",
+        "ownerIndexBucket": "DQczY5S6uA2gLc3fFxkZekLBaj9jiHBwcUoyXgPQVv5",
         "ownerIndexBucketId": 416
       },
       {
@@ -210,9 +210,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-17.json",
         "publicKey": "H3DgDNEmd5t7xuWxCTsKhwZfWvECSK1vhCRpWGMTa18y",
         "participantId": 17,
-        "participantBucket": "EoaSKqGdmDJdkpVRVMxAkeXAyLiXUiu3tbjEL79MyXq1",
+        "participantBucket": "E8LkaDgiqNKWHhaTsv4aQYpTaVqv8q2bts8gB2wZqKSg",
         "participantBucketId": 1,
-        "ownerIndexBucket": "9psk6QtW9jhsWJ1Gn98dS64i6pXgTeCwhTZf7nsWBcda",
+        "ownerIndexBucket": "CSYNdcjVkg7uUdEi1NetCotnYCQF3q2jU3PJj7mXawfv",
         "ownerIndexBucketId": 972
       },
       {
@@ -221,9 +221,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-18.json",
         "publicKey": "6kaNErrGPwBoRk88oNfJxC1KX1AioSZhpgWCNfCfDH7b",
         "participantId": 18,
-        "participantBucket": "CUfke8TbkD2Y2qHPUX5MsPvqxWVNyQvhHruK4EVuen7j",
+        "participantBucket": "CJBqQ27RoX4ACaouhvrpFFjE5RunxPnFMrUqfhxowGJB",
         "participantBucketId": 2,
-        "ownerIndexBucket": "FEBrevU2dXybJ8V5PTCQuLifoq4BEMdvurr6eKNDJbkH",
+        "ownerIndexBucket": "8usW6LjD5HCpVyFbKkK4AFNiFXXVBtLvKcTZjEFJopVm",
         "ownerIndexBucketId": 684
       },
       {
@@ -232,9 +232,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-19.json",
         "publicKey": "A28R4FPCmSWkhnorbm1BY8i9qwqueiXsQSHSEtzcVKSJ",
         "participantId": 19,
-        "participantBucket": "CUfke8TbkD2Y2qHPUX5MsPvqxWVNyQvhHruK4EVuen7j",
+        "participantBucket": "CJBqQ27RoX4ACaouhvrpFFjE5RunxPnFMrUqfhxowGJB",
         "participantBucketId": 2,
-        "ownerIndexBucket": "9qVKwF1pQBxqw46kQvaMNCdi6kJbxVc9aThwT1NeZsDJ",
+        "ownerIndexBucket": "4R15ChkLss8pgSnGF4P9CDPczSe3xRAxM75FdvLVVyyN",
         "ownerIndexBucketId": 340
       },
       {
@@ -243,9 +243,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-20.json",
         "publicKey": "AJxy33wpUhYTFNsrQrThYav1vDUWjoqZx8SaHkjXvhU2",
         "participantId": 20,
-        "participantBucket": "CUfke8TbkD2Y2qHPUX5MsPvqxWVNyQvhHruK4EVuen7j",
+        "participantBucket": "CJBqQ27RoX4ACaouhvrpFFjE5RunxPnFMrUqfhxowGJB",
         "participantBucketId": 2,
-        "ownerIndexBucket": "7feZSdfzWntynxi982Y1SgE6fHhfam3WCeL6pzfMPR1u",
+        "ownerIndexBucket": "BkXPs3HpP2PMtaGKpCxTUAjausmBzGr5BScwXqEV8TcB",
         "ownerIndexBucketId": 357
       },
       {
@@ -254,9 +254,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-21.json",
         "publicKey": "ECZLcxzzJUWFnatRoDQ4x6krkwT3bUPB44WZ81asUtyC",
         "participantId": 21,
-        "participantBucket": "CUfke8TbkD2Y2qHPUX5MsPvqxWVNyQvhHruK4EVuen7j",
+        "participantBucket": "CJBqQ27RoX4ACaouhvrpFFjE5RunxPnFMrUqfhxowGJB",
         "participantBucketId": 2,
-        "ownerIndexBucket": "Eu82nT2NsPBWdXgWyWcQgRLaTiqko8JoUWLEPviYRWGS",
+        "ownerIndexBucket": "4WYgphLyxUXUFus45wZqngE6zHnxrX5mjkL2sPdPtWJD",
         "ownerIndexBucketId": 91
       },
       {
@@ -265,9 +265,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-22.json",
         "publicKey": "7x4KbUnFwe3TNxov6h8w4ZqK5PSxnv4Zktye5gTZE4FU",
         "participantId": 22,
-        "participantBucket": "CUfke8TbkD2Y2qHPUX5MsPvqxWVNyQvhHruK4EVuen7j",
+        "participantBucket": "CJBqQ27RoX4ACaouhvrpFFjE5RunxPnFMrUqfhxowGJB",
         "participantBucketId": 2,
-        "ownerIndexBucket": "FfAZexeZAR1CE9Z9azdLAV8pm2CDQiJ9XV1xrxjuraok",
+        "ownerIndexBucket": "DCZXSRTkfSeykzB65aQZzPw7rigqbm661H9NewqNy6yT",
         "ownerIndexBucketId": 347
       },
       {
@@ -276,9 +276,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-23.json",
         "publicKey": "E9D5sB1RcZHQZ6G5cy5XUKyZtvUG1VtqHCA51g65WUkK",
         "participantId": 23,
-        "participantBucket": "CUfke8TbkD2Y2qHPUX5MsPvqxWVNyQvhHruK4EVuen7j",
+        "participantBucket": "CJBqQ27RoX4ACaouhvrpFFjE5RunxPnFMrUqfhxowGJB",
         "participantBucketId": 2,
-        "ownerIndexBucket": "BRm3V1WLg9sxc9iHBaFjNq1iBhPXSjd3eprvcZ1QWCMY",
+        "ownerIndexBucket": "C9v6k9jnF3qF2oCYH8XQiG9KWQpGBy6MtUtjnPDrpb4J",
         "ownerIndexBucketId": 365
       },
       {
@@ -287,9 +287,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-24.json",
         "publicKey": "C53JvG3dW47t2saXd44Z82V1tZQiMTBctKGn3DxMJ9jP",
         "participantId": 24,
-        "participantBucket": "CUfke8TbkD2Y2qHPUX5MsPvqxWVNyQvhHruK4EVuen7j",
+        "participantBucket": "CJBqQ27RoX4ACaouhvrpFFjE5RunxPnFMrUqfhxowGJB",
         "participantBucketId": 2,
-        "ownerIndexBucket": "CkHxQFdV9GF3f6YeiaiaMun4JjTiVL48NoyQZtFxSDo6",
+        "ownerIndexBucket": "HeNTVQvxUb14BwgfyruEMf5Uq2a9M4KW1E3Q8UJvMwzu",
         "ownerIndexBucketId": 706
       },
       {
@@ -298,9 +298,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-25.json",
         "publicKey": "5drYsQw7FT69Xe2BQJJLWwnkGGBMLYtdjALXfWndbidX",
         "participantId": 25,
-        "participantBucket": "CUfke8TbkD2Y2qHPUX5MsPvqxWVNyQvhHruK4EVuen7j",
+        "participantBucket": "CJBqQ27RoX4ACaouhvrpFFjE5RunxPnFMrUqfhxowGJB",
         "participantBucketId": 2,
-        "ownerIndexBucket": "ETRcAPh8mKxyKm5JfpskWLfzRPrHtdquaZ36nvpd6WNy",
+        "ownerIndexBucket": "GioKdfEaGVAZYgvjmoSFGBPwu1jzrdN9f3Vo9kr8GnpG",
         "ownerIndexBucketId": 908
       },
       {
@@ -309,9 +309,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-26.json",
         "publicKey": "5uuPtAmCydzHK92ChWYnhuPh6PRMZckhFH74G92dTmc3",
         "participantId": 26,
-        "participantBucket": "CUfke8TbkD2Y2qHPUX5MsPvqxWVNyQvhHruK4EVuen7j",
+        "participantBucket": "CJBqQ27RoX4ACaouhvrpFFjE5RunxPnFMrUqfhxowGJB",
         "participantBucketId": 2,
-        "ownerIndexBucket": "ECVg6YmiRpEbRBrknJ1cWb8BdKqDPTJ2mQFvUH5KJd3Q",
+        "ownerIndexBucket": "2hwGNzW2uftyMrjBA93kCrddPEfKmgXtjpB9BdAaKvTW",
         "ownerIndexBucketId": 739
       },
       {
@@ -320,9 +320,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-27.json",
         "publicKey": "DgudcrTAypndXaarAj5231uXx1t5ah62dXNTnRWe1GwM",
         "participantId": 27,
-        "participantBucket": "2HtHTwJNoPpp1beo4fuJ4VgA21KB5mYARHwxicRwkRzV",
+        "participantBucket": "7yrsM1fckA6mX2WJjGxFTSZA5drAvKdAHqpg2Qyt64ae",
         "participantBucketId": 3,
-        "ownerIndexBucket": "Ayuz6d4grv7MQiZ4mnj3E2x6hx74WADoS5MTWaYqVPYd",
+        "ownerIndexBucket": "H4FBK44hn6JyuUeGiobbiLZivLZebwZXJn29iDaX1Ah3",
         "ownerIndexBucketId": 546
       },
       {
@@ -331,9 +331,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-28.json",
         "publicKey": "FHUP9niuLwTLcxSCfHqkiyibdhJYrJeBbCha1rGtQSVa",
         "participantId": 28,
-        "participantBucket": "2HtHTwJNoPpp1beo4fuJ4VgA21KB5mYARHwxicRwkRzV",
+        "participantBucket": "7yrsM1fckA6mX2WJjGxFTSZA5drAvKdAHqpg2Qyt64ae",
         "participantBucketId": 3,
-        "ownerIndexBucket": "9cbueRaFnorRZz3bQ8fRYkqyAm4jfHUu1vR8EvToheba",
+        "ownerIndexBucket": "9s51bxxp8HvWeN6coVytjUgyQpsxgJkyepSGnTNczwiH",
         "ownerIndexBucketId": 606
       },
       {
@@ -342,9 +342,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-29.json",
         "publicKey": "9GuN2zuyMSeavkQ9Xyw2s4fzRLRXQGVH9kWcR6K7kXQ4",
         "participantId": 29,
-        "participantBucket": "2HtHTwJNoPpp1beo4fuJ4VgA21KB5mYARHwxicRwkRzV",
+        "participantBucket": "7yrsM1fckA6mX2WJjGxFTSZA5drAvKdAHqpg2Qyt64ae",
         "participantBucketId": 3,
-        "ownerIndexBucket": "8jgo7yddLApo4nRrDGudo8YnFiJMvaEccXcjeMBvCn2q",
+        "ownerIndexBucket": "h8AEDAQcPnBpE3dRS7YaugfqSydmkvfueSeoW8h25en",
         "ownerIndexBucketId": 407
       },
       {
@@ -353,9 +353,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-30.json",
         "publicKey": "8Zcb3vDM8MEwQS5x7taDr9mffbNQ73QE8VTsKtXL5Ws1",
         "participantId": 30,
-        "participantBucket": "2HtHTwJNoPpp1beo4fuJ4VgA21KB5mYARHwxicRwkRzV",
+        "participantBucket": "7yrsM1fckA6mX2WJjGxFTSZA5drAvKdAHqpg2Qyt64ae",
         "participantBucketId": 3,
-        "ownerIndexBucket": "FUxjo8uv7bm2yiPjZDesctrtPZpGsn4HFSYRq7dbFy6q",
+        "ownerIndexBucket": "88YGUwYaknhEyJZbH8ztSPZWfgXRbbHQizUMq5j25U9V",
         "ownerIndexBucketId": 438
       },
       {
@@ -364,9 +364,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-31.json",
         "publicKey": "8kUxDkgr8aTni8MVANU8mCEmg9G2J46LTT1J9Ny9JKf1",
         "participantId": 31,
-        "participantBucket": "2HtHTwJNoPpp1beo4fuJ4VgA21KB5mYARHwxicRwkRzV",
+        "participantBucket": "7yrsM1fckA6mX2WJjGxFTSZA5drAvKdAHqpg2Qyt64ae",
         "participantBucketId": 3,
-        "ownerIndexBucket": "4ssrhti4Sg2EWXaHKWngvYGpCdhMxJgvZurZGMN84s6b",
+        "ownerIndexBucket": "4Mxu4L9vyesn27KXNusbafNUZf9HQ29LSib9hGkrD7Pq",
         "ownerIndexBucketId": 621
       },
       {
@@ -375,9 +375,9 @@
         "keypairPath": "keys/colosseum-basic-devnet/participant-32.json",
         "publicKey": "FKA1shR5ztSgunepqk2JhyLGJCGGKu2wNpGah6USsncr",
         "participantId": 32,
-        "participantBucket": "2HtHTwJNoPpp1beo4fuJ4VgA21KB5mYARHwxicRwkRzV",
+        "participantBucket": "7yrsM1fckA6mX2WJjGxFTSZA5drAvKdAHqpg2Qyt64ae",
         "participantBucketId": 3,
-        "ownerIndexBucket": "5k98hAvFWudG8TvyhdnThnZRRgRHhvNqUhyhr4PvL4Yk",
+        "ownerIndexBucket": "3NoJ91ar7UPSQ6ca9q8Aa51P5MTNr24FdPVh7UpQA1vy",
         "ownerIndexBucketId": 382
       }
     ]
@@ -390,8 +390,8 @@
       "kindId": 0,
       "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
       "decimals": 6,
-      "registeredAt": "1778444901",
-      "vaultTokenAccount": "84JctT2J5LpcqBJsALtBEYqVvwFdJrwMu4pcujiDSK2P"
+      "registeredAt": "1778954289",
+      "vaultTokenAccount": "APdxbnbTtjFZZqeYKiU4xi5rKtv5ajGD1HvAbhaEz64G"
     },
     {
       "tokenId": 2,
@@ -400,14 +400,14 @@
       "kindId": 1,
       "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
       "decimals": 6,
-      "registeredAt": "1778445021",
-      "yieldStrategy": "9iFZmcTYeAmKDaBXgBC9KKGJVJVHA5kPVcSLNTaSjzk9",
-      "shareVault": "6qydtQAzop7DXSCgaEfjc7wx726VbYohWc18zAnFy1Ak",
+      "registeredAt": "1778955052",
+      "yieldStrategy": "AZLCqJorERcHfVQVn9Gi8rTPMKxCWjDVYDmyaEdAdVX",
+      "shareVault": "F5EwVNthQ5QXZLyWaG1oPHqkjGSZiTCxnBpavsT8oAQK",
       "underlyingMint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
-      "yieldProgram": "2AvcGb3Dp7vu6iiqK81LHXruZ64TSTWbqLUTbtnPGarY",
-      "reserve": "7xCuJS66YaHjXsnYcc2rNqZgvsS7JoqUSzHmepHvtKJ",
-      "shareMint": "5YM2MhybWutfQCSjgrfiyUse5c7K75aeap16sLuc2xg2",
-      "liquidityVault": "3NQ3AVWN1aqTYWLAuFZA7wpXvrMCUK8KSBexRnF94Rri",
+      "yieldProgram": "916FRevu6HadFHTDi8hV5tCXmJiJDTbADJRx5hQjKDcD",
+      "reserve": "Dn19vLE2ZdrmDD4pjGEeXnHyYz4yrAwy9JzKZ1iTzGBA",
+      "shareMint": "CvnU6CGFAWkM3mdiLVQDE589ijTckfokZTK7GVFX9U5k",
+      "liquidityVault": "6ZHUyPuaeZQDVzamqC1zhFsRLd9TsFzW1UKS17knkNsA",
       "protocolYieldShareBps": 3333
     }
   ]

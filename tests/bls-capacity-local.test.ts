@@ -302,8 +302,10 @@ async function evaluateCandidate(params: {
     blocks,
   });
   const aggregateSignature = aggregateBlsSignatures(
-    participants.map((participant) =>
-      signBlsMessage(participant.blsKeypair, message)
+    blocks.flatMap((block, index) =>
+      block.entries.length > 0
+        ? [signBlsMessage(participants[index].blsKeypair, message)]
+        : []
     )
   );
   const pairMetas = orderedPairMetasForRound(selectedEdges, participants);

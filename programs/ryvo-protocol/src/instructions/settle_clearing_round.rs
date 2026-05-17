@@ -124,25 +124,27 @@ pub fn handler<'info>(
             participant_snapshot.owner != Pubkey::default(),
             VaultError::ParticipantNotFound
         );
-        require!(
-            participant_snapshot.bls_scheme_version
-                != ParticipantBucketSlot::BLS_SCHEME_VERSION_UNREGISTERED,
-            VaultError::ParticipantBlsKeyNotFound
-        );
-        require!(
-            participant_snapshot.bls_scheme_version == BLS_SCHEME_VERSION_V1,
-            VaultError::AccountBlsKeyMismatch
-        );
         participant_states.push(ParticipantRoundState {
             participant_id: block.participant_id,
             bucket_account_index: participant_bucket_index,
             token_total_balance: participant_snapshot.token_total_balance,
             net_position: 0,
         });
-        aggregate_pubkey = Some(aggregate_pubkey_with_compressed_be(
-            aggregate_pubkey,
-            &participant_snapshot.bls_pubkey_compressed,
-        )?);
+        if block.entry_count > 0 {
+            require!(
+                participant_snapshot.bls_scheme_version
+                    != ParticipantBucketSlot::BLS_SCHEME_VERSION_UNREGISTERED,
+                VaultError::ParticipantBlsKeyNotFound
+            );
+            require!(
+                participant_snapshot.bls_scheme_version == BLS_SCHEME_VERSION_V1,
+                VaultError::AccountBlsKeyMismatch
+            );
+            aggregate_pubkey = Some(aggregate_pubkey_with_compressed_be(
+                aggregate_pubkey,
+                &participant_snapshot.bls_pubkey_compressed,
+            )?);
+        }
     }
 
     let aggregate_pubkey = aggregate_pubkey.ok_or(error!(VaultError::ParticipantBlsKeyNotFound))?;

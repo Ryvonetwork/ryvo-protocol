@@ -1144,13 +1144,13 @@ pub struct RegisterYieldBearingToken<'info> {
         seeds = [TokenRegistry::SEED_PREFIX],
         bump = token_registry.bump,
     )]
-    pub token_registry: Account<'info, TokenRegistry>,
+    pub token_registry: Box<Account<'info, TokenRegistry>>,
 
     #[account(
         seeds = [GlobalConfig::SEED_PREFIX],
         bump = global_config.bump,
     )]
-    pub global_config: Account<'info, GlobalConfig>,
+    pub global_config: Box<Account<'info, GlobalConfig>>,
 
     #[account(
         init,
@@ -1159,23 +1159,23 @@ pub struct RegisterYieldBearingToken<'info> {
         seeds = [YIELD_STRATEGY_SEED, token_id.to_le_bytes().as_ref()],
         bump,
     )]
-    pub yield_strategy: Account<'info, YieldStrategy>,
+    pub yield_strategy: Box<Account<'info, YieldStrategy>>,
 
     /// Underlying SPL mint (USDC).
-    pub underlying_mint: Account<'info, Mint>,
+    pub underlying_mint: Box<Account<'info, Mint>>,
 
     /// Lending program (mock-yield in dev / Save-Kamino in prod). Validated against `Reserve`.
     /// CHECK: program id is checked via the on-chain instruction it dispatches.
     pub yield_program: UncheckedAccount<'info>,
 
     /// Existing `Reserve` PDA in the yield program. Must be initialised already.
-    pub reserve: Account<'info, mock_yield::Reserve>,
+    pub reserve: Box<Account<'info, mock_yield::Reserve>>,
 
     /// Lending share mint (cUSDC). Mint authority = `reserve`.
-    pub share_mint: Account<'info, Mint>,
+    pub share_mint: Box<Account<'info, Mint>>,
 
     /// Reserve's USDC vault — kept for symmetry/CPI ergonomics.
-    pub liquidity_vault: Account<'info, TokenAccount>,
+    pub liquidity_vault: Box<Account<'info, TokenAccount>>,
 
     /// Protocol-owned cUSDC ATA under GlobalConfig PDA. PDA-seeded so it is deterministic.
     #[account(
@@ -1186,7 +1186,7 @@ pub struct RegisterYieldBearingToken<'info> {
         token::mint = share_mint,
         token::authority = global_config,
     )]
-    pub share_vault: Account<'info, TokenAccount>,
+    pub share_vault: Box<Account<'info, TokenAccount>>,
 
     #[account(mut)]
     pub authority: Signer<'info>,

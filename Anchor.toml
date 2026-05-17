@@ -6,22 +6,22 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-ryvo_protocol = "BGSG6gUuUa6SDVfbWB7VdQ2Sw1fBmyQwNX2ERQsk6iXS"
-mock_yield = "2AvcGb3Dp7vu6iiqK81LHXruZ64TSTWbqLUTbtnPGarY"
+ryvo_protocol = "GNZ4upG1xGRGxXUUNtKgRqFtfvNQ3JCWXr1FFj51HedJ"
+mock_yield = "916FRevu6HadFHTDi8hV5tCXmJiJDTbADJRx5hQjKDcD"
 
 [programs.localnet]
-ryvo_protocol = "BGSG6gUuUa6SDVfbWB7VdQ2Sw1fBmyQwNX2ERQsk6iXS"
-mock_yield = "2AvcGb3Dp7vu6iiqK81LHXruZ64TSTWbqLUTbtnPGarY"
+ryvo_protocol = "GNZ4upG1xGRGxXUUNtKgRqFtfvNQ3JCWXr1FFj51HedJ"
+mock_yield = "916FRevu6HadFHTDi8hV5tCXmJiJDTbADJRx5hQjKDcD"
 
 [programs.mainnet]
-ryvo_protocol = "BGSG6gUuUa6SDVfbWB7VdQ2Sw1fBmyQwNX2ERQsk6iXS"
-mock_yield = "2AvcGb3Dp7vu6iiqK81LHXruZ64TSTWbqLUTbtnPGarY"
+ryvo_protocol = "GNZ4upG1xGRGxXUUNtKgRqFtfvNQ3JCWXr1FFj51HedJ"
+mock_yield = "916FRevu6HadFHTDi8hV5tCXmJiJDTbADJRx5hQjKDcD"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "https://devnet.helius-rpc.com/?api-key=3faa0eb3-3be2-42bd-8a96-cd73694301ae"
+cluster = "https://api.devnet.solana.com"
 wallet = "/home/heis/ryvo/ryvo-protocol/keys/devnet-deployer.json"
 
 [scripts]

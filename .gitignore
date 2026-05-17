@@ -24,5 +24,8 @@ logs/
 benchmarks/live/*.json
 benchmarks/synthetic/*.json
 
+# Local demo bundle contains devnet key material for server-side demos.
+deployments/devnet/colosseum-bundle.json
+
 # Superstack scratchpad
 .superstack/

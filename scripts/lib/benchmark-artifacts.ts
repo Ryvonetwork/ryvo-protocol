@@ -25,6 +25,7 @@ export type DemoBenchmarkScenario = {
     | "bundle"
     | "single-payer-clearing"
     | "bilateral-clearing"
+    | "atomic-routed-clearing"
     | "multilateral-clearing";
   participantCount: number;
   channelCount: number;

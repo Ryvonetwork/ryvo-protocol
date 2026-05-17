@@ -1,574 +1,346 @@
 {
-  "generatedAt": "2026-05-10T20:48:15.849Z",
+  "generatedAt": "2026-05-16T18:21:10.290Z",
   "network": "devnet",
-  "rpcUrl": "https://api.devnet.solana.com",
+  "rpcUrl": "https://devnet.helius-rpc.com/",
+  "sourceManifest": "deployments/devnet/colosseum-basic-setup.json",
+  "token": {
+    "tokenId": 1,
+    "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    "decimals": 6,
+    "targetAmount": "2000000"
+  },
+  "targetLamports": 100000000,
   "funder": "9418vqXsaVbwUEP5q8FGtRxEtzrDgDc2ECfHrWWthvPQ",
-  "usdcMint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
-  "usdcTargetPerWallet": "2000000",
-  "solSentPerWalletLamports": 100000000,
-  "walletCount": 33,
-  "transfers": [
+  "wallets": [
     {
       "label": "merchant",
       "role": "merchant",
       "publicKey": "5HNbDDwAWmdmrDSCtdHt5MMozyRtNx3ntz8yQBqjY3av",
       "participantId": 0,
-      "usdcAta": "3Ypr1iif2qLLAjTLPb1MuaH9uP1XB8dS9v2NA8ByH6hb",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "5Zy3o1UpEnZxUg2oU9KckTZLQApMAhit99niJzugDwqmdWzof9kMzpmpij3mJhE3AHMViYPtdCuiZh24eVuD3w2d"
-        }
-      ],
-      "solSignature": "5z23LZWN49xRjx5vfJ1rqatjmKgvrny1zPtpyYSJSQWBboWyve3PS52jQS3oPLbiBnEzHXop1o6gGH3CBEHeoWUF",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 142208080
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "3Ypr1iif2qLLAjTLPb1MuaH9uP1XB8dS9v2NA8ByH6hb",
+      "signature": "4GkiFbEhGL5VUXJ98rnEiQn9hjBpubyEN8qJC6JscdmTsKqJa2ks9hwozuns3vtiHNc3REwtUpu7neXrkCGgkQ5W"
     },
     {
       "label": "participant-01",
       "role": "participant",
       "publicKey": "4cVLgrgrRpwC4JYbGhQ8EDoWQRpdTnGUzjgCr2p5xKGL",
       "participantId": 1,
-      "usdcAta": "88T3SyQePLaojp6RpPgzCfQ2wfVYv3GWS21WxiN3ctrD",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "17Ywzyi2eAAoufRYCvt3zwhUFW7YTRwoSqPcggkY3kFCfvWZhPNJMgbxNsAfnPvh6aKXfvNQLxM3nA5YZW6Toeo"
-        }
-      ],
-      "solSignature": "27wo5Ak3YSP6fNvFJd6LwQwejnaGfBXokkV6TbBn23CVPpLeKTvoUGqE5SQtX1jCGb6HUt92gkJc6FWtLF1cUiuT",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "88T3SyQePLaojp6RpPgzCfQ2wfVYv3GWS21WxiN3ctrD",
+      "signature": "3Du8oid2J1EHKqr6aMDzepVkV7y6nwq7X7tUcPVAVQwumWJT9y7VSbkRRxonA3oavsuN7AXZiUmSgSBfqxq62ua9"
     },
     {
       "label": "participant-02",
       "role": "participant",
       "publicKey": "BMAWCAKWt1HZFpz3Kb5fgXtSTt26LgRn4zcBNheacXF4",
       "participantId": 2,
-      "usdcAta": "3VdazButtESkLSUpGgvKR1jWveEkdSyW4GF34yrbyyEh",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "h2dheHbddaUwjRzNGNmZWHfe6stEn7vnPvQ9YF37GJEPV8YwMTzxaQsb7AFh4AqLAX6xaUZscfGhG4R88gh98Cj"
-        }
-      ],
-      "solSignature": "459jMsjW9WYr6CxyqgKdbNkzvgCPreF3GgXiWfhx1YcvovShszEEgH41bYqPKevVLEqjF4ud4EBqGv7yNPC1xPBz",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "3VdazButtESkLSUpGgvKR1jWveEkdSyW4GF34yrbyyEh",
+      "signature": "2HHi8unrDkFgkasm2CnENgQZAsaHgSSQS6e81yuGgtDTp8kF13khyBMy59SvAv8XGjxeaSqQZJhiC8CPWWExshUi"
     },
     {
       "label": "participant-03",
       "role": "participant",
       "publicKey": "7cA1i1yjsYJNV9Jd1rRNjU96oiH7HanPuGvvhHu9H424",
       "participantId": 3,
-      "usdcAta": "HEkdCkQTgwGWzqjozbjxjJrRrEkd1trXGyt5uqrdyoVc",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "5kgwuah4vKZor7E1QXhSng8bPwgmhL4dXAD7rtDv6jUnTncvmR3igqrXKU3spwugnnKVo6P6nfMmdHGvocdpACDm"
-        }
-      ],
-      "solSignature": "4WVVZCLt7dvTbBRejUKuVdP2w5wF9hcYn8EGuqBD8ZFTuxaA8xagxNKsTTy6gGPxTUvr7CB6gNi1NgqmZFvbHSZ6",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "HEkdCkQTgwGWzqjozbjxjJrRrEkd1trXGyt5uqrdyoVc",
+      "signature": "2S6eZpJ99dMC6ioYPBZzKXAABcA33DC478EEXJENF1H58sxgrzRSjMhXMbjntJgd4LCv3nRmyS9KF2LyutWoxYs5"
     },
     {
       "label": "participant-04",
       "role": "participant",
       "publicKey": "BxZG5cFygx4SFkQRAzuofL7tgP9ZyJmQRFjxx76UWRhT",
       "participantId": 4,
-      "usdcAta": "FZbXW1PChCpzcrqw2RHyjf2dhHpCdYG4byX13cGxP6P",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "34WrctN9ix6i7DLnvGZMVVm9PLtWzQavcao3fa4xjL4DkJ9PqD6kEouZPJeFZYNSduTjQ1yBJ963GeL2jAP8SQBj"
-        }
-      ],
-      "solSignature": "Q3pAhUExsPy5r38omT3JEAqDBKTZevXcvDHQZMLBcz3DRMttE78SG22De6syVJSyyMTfNa2X8yq5ZhSFZU9mqqc",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "FZbXW1PChCpzcrqw2RHyjf2dhHpCdYG4byX13cGxP6P",
+      "signature": "5euTqVkwjpE6ZARxpQv7aqamwp6LaRy44z6h3fwPXgEEpdf65S5QAwb1fYZ6H31iq8kaaZUbN9TFadF6MopASEuT"
     },
     {
       "label": "participant-05",
       "role": "participant",
       "publicKey": "8kVHLzvuAWxrMRbXQbv3nBfPhhjfu3xemMCrfPndojC1",
       "participantId": 5,
-      "usdcAta": "FhEz65XXHuGAeh84LZb4EGnrRGWtmYwHwwizCuFiGGnD",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "2xWuXQxHetxzWJGdb5p8UKCmdUjWgXTYH9V23c4649ryJVXZKKY7ueo9eA53SvGwx3ZMxc7udAj9zZDdd4vGCKJc"
-        }
-      ],
-      "solSignature": "2kWgTbhrgd2JC2Jrb7yftHxTQp2CKEkaFPJ6jd9zyMzAdbuVzj3PKH9pU9ZWRXfyxxgN5V8KYaBWjiW4JR6gu5Uh",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "FhEz65XXHuGAeh84LZb4EGnrRGWtmYwHwwizCuFiGGnD",
+      "signature": "56Fq6Lv2nr4oKD6dswEk6d2QWSpQxya4tdXKtYPUhqeTct2Vdrb1wSnFzriTZ7KmBqvLjuHM2QfBC95Lsg5YRpsi"
     },
     {
       "label": "participant-06",
       "role": "participant",
       "publicKey": "CrsCmTXUXUtNDTYGW51xu5v72jHKstqCWtMuC7mLEdz1",
       "participantId": 6,
-      "usdcAta": "FNSY5UwrG3gbimSNtWt5mmhbNpbcpqLNEZXTKAiMXKDP",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "57qby4ytVkvaK9RdjGXYh8s9GvbYisVaCGkDUaFNw8NT5dzTczUx1BzDiJSLMY9tEzrE9Xxkb5H7R4u4Un8AqoFr"
-        }
-      ],
-      "solSignature": "5swP4xAhJ6PupH6h6k5uHuJB4h6RdfkwLTukA4F6b7vGLn4ho3Rtj4m2D9PJhjG7q2yCtVMiPZ7jQhE2Leibi7rm",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "FNSY5UwrG3gbimSNtWt5mmhbNpbcpqLNEZXTKAiMXKDP",
+      "signature": "5k2GSNpDfVBiaMj7WdeZvQcM828iQuSjYPY8vT2aXbQkxGm5s1EBreqUYGcFFoLzGyMnQWYjyPR8ad5LAU5SbpN7"
     },
     {
       "label": "participant-07",
       "role": "participant",
       "publicKey": "DBBKdm4fFHBn6JD5tKAC3NeMuF6xaqhTYCUetpMeWLcK",
       "participantId": 7,
-      "usdcAta": "Hj4BBYXvCeXZezNrXnCPGBwhFVzQBwogscQ42wcKQpgW",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "DQgFpotUBEcUNVMLmVUxmmrUXLZv9Z8ftJggEHRWmez34v34ebvjV2BotLrH4uizz8BkoweQ2nSS2VhoW5sbWyS"
-        }
-      ],
-      "solSignature": "2oxnGTv3Fs21fw2hAjkNCVA89FSeNrDE5PLWok8QtRcqT1Xdqur9rN1u985MgFXUKe4vagU9qnRx6M8gNBqbzgGP",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "Hj4BBYXvCeXZezNrXnCPGBwhFVzQBwogscQ42wcKQpgW",
+      "signature": "4XSsVtwe8ACqCewFjQzituik2DwVM9UinRGaJ2e46J7PjCs9cEgJ5LmoU6V4JFHxmRemwrT9cmLQ9Q3tSbeb3uU8"
     },
     {
       "label": "participant-08",
       "role": "participant",
       "publicKey": "2SNo2xUKXD8Rk2dBgj1NDAHJ36u9qTC4qJctHDsEoen3",
       "participantId": 8,
-      "usdcAta": "BjvdfKDbo2WfhRSTqrw6fRZcpTrm6kD1h4LKk8wP6KX6",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "2cTbgLbuP1yNKEyX1hRbddWXijqadF1S2DUreppm3DQDonzvXVw4neAfUHNrEpcAsCyGuQs8GtupZHPz7aVdtpLY"
-        }
-      ],
-      "solSignature": "38CDouejT1Bgshqs4bGA8BEC8PtAFNh9Wa3nCPGFyYJF3sJRBn4iKkK2o4k9BtRdzMUN7K2afpMsbs54ZZcpX1st",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "BjvdfKDbo2WfhRSTqrw6fRZcpTrm6kD1h4LKk8wP6KX6",
+      "signature": "555jgpzRRmbbmunogybrmvprXUUjK92hw54eJ4zHJAzeTUDN5EQiMESuwXMdaZAhQzWjBMUA1RQukaSFEUQxmmJK"
     },
     {
       "label": "participant-09",
       "role": "participant",
       "publicKey": "9vQ3rDKBGEA8wwBo7kTYUrYSEQGP8czXSMuad8U6twYC",
       "participantId": 9,
-      "usdcAta": "FfNa8PxR3moHBNvDLA7MAdRmZSaVB77gWgbthkoTRXKL",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "398kuAn64UPed8EWz4buuHgg4Vy2giprpCn4KCRfzoNuWVnu4jxz66PPd8E7yC8BMAqahqqxk7tLP4SuNeNbjRzh"
-        }
-      ],
-      "solSignature": "24x665pw4eaGAbgpTLj9xDHckw6CydLDPTrEEmrvYqv4FXb1Xqu2YbQzztXQm69ULRA7G11XBdUL9NFsbqqYh1gA",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 142208080
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "FfNa8PxR3moHBNvDLA7MAdRmZSaVB77gWgbthkoTRXKL",
+      "signature": "5GqGHv2vMeFDbeEWh6CQtoV2xYWSkdwPBumorLCTTWmwbLycqKgWiNCF7jYk5dBkDLuvGdpGanxLzdxDrfCaCfzU"
     },
     {
       "label": "participant-10",
       "role": "participant",
       "publicKey": "G1TN6o9khBdXEEwyQCbsFS8oo8xVsGZGPL4DpU1L6MR3",
       "participantId": 10,
-      "usdcAta": "H8XvDE83Y98aunmMFBpdEoggit2ceL327XsMFtB91pjK",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "tBSBH8MAR1gG3ogiK9MsYWzoX5KiGt2amJZKL3zwBYBRX4SQvT5m4fY6yKgV7uaqw1pG2GYdE9K1MXPGRiCwQaG"
-        }
-      ],
-      "solSignature": "2PivCUbPjQQg3WmF5eVrdVRu1uCuzE2A6jbZB4ZzxwSvr4ZXnvsKpY6kBNMEWeTQLqE3FHxbQyAYmfdV7STRWdBj",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "H8XvDE83Y98aunmMFBpdEoggit2ceL327XsMFtB91pjK",
+      "signature": "h8vGs7Sjs1L6GMptpaoEeGDSDYczijerbHymnskkrXXJ2CAJmTDgpkmVtLtbQcvCNYiXextQL9M5ai1ZC6rY8FN"
     },
     {
       "label": "participant-11",
       "role": "participant",
       "publicKey": "45WMxdUonFcnwJqXboWvjrq53inWbfYLSNvpWoNqwbqk",
       "participantId": 11,
-      "usdcAta": "tU5ZxBmQRwLaBuZzmCyJUxFMH7iKzVAUP92HsNvfMcp",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "26oZVs8oZcRmsuvobH6nfhMpjR9WNiqLVafWSVcC4HAyNGHJNwZFDHq9fMNF7n2CsvAk1CdUzkR6f7MEQiq6F4s7"
-        }
-      ],
-      "solSignature": "57yNFAoYWvd5FsGBoEmz95hpy1BuX81nY9eCoQypRSUK9FE2LNsjdGFqPDLEPoqmofGgXUmseLctRb3djDs2xEZ9",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "tU5ZxBmQRwLaBuZzmCyJUxFMH7iKzVAUP92HsNvfMcp",
+      "signature": "266VmZoWZjh4mTaDJG78anfAsxzVr8dFtzZkEGHJfs3r7s8ZZ2Zuv7Hphfy8RtprNwoAX5E2vz5hqVcTK2AR1jbD"
     },
     {
       "label": "participant-12",
       "role": "participant",
       "publicKey": "6Wikc37teyWBe5N979bRdtofAyNZSMSsDcUGzXfsmDSi",
       "participantId": 12,
-      "usdcAta": "38sGsfHqNkxpj1qYvuiRWKezgiRRBvWpPZedvKzqSgyg",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "643VTVxKaZGJoNGq1Y3PWzu4mhNCjme6P6Rx5fiaPLCS8ADRGVmgCkK76pexsjAHHg52eLG7R8ZMiEonEr5vCcbg"
-        }
-      ],
-      "solSignature": "5Qcu3mSo6ZCnrub7kQX8gq2eHqB27gkeFmU3L2tcSqhMLBQUegnwvbKA2cPrnmhZ5cnyWGFCRQaUHUEHVUJcn4Tc",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "38sGsfHqNkxpj1qYvuiRWKezgiRRBvWpPZedvKzqSgyg",
+      "signature": "2mfmLc87KHm6dmngSjJseGnBDsTGj5QtXY4AR4DJqSTiBwXDWSLhgdRs3MTEaQjNhw8P3526jQhiBbn7jzVLHgci"
     },
     {
       "label": "participant-13",
       "role": "participant",
       "publicKey": "5KjnDkyMMBngFy8uZG9b92Bn1bevADSfAyQzxzutzqMS",
       "participantId": 13,
-      "usdcAta": "7w8YWN9tpW4RfTWYjRexiaoiV4fAYFX4DEyX6av4hbxC",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "291kPLdjKkHCrQsQfyL2Ur3iMgxKS3WtoU5UVJSwJYPkBpXpGcYQNwTD2UYME47Kn6G74K3SGL4v8kCUdcqiAXYR"
-        }
-      ],
-      "solSignature": "5LC7hbyhYN8Y64pdeFaLXUVMetxtfdS4epdynaPH42jE2hQAEQFo3uNwJ7pf9nUTT2gaeNRENQxNiY7wz6wBwrRZ",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "7w8YWN9tpW4RfTWYjRexiaoiV4fAYFX4DEyX6av4hbxC",
+      "signature": "2SuDXotXt1irVYHj5gXuVh3Z5ZyYYU6AybkxZxCVkTATvrkPo9Lw9oZ1xdsMYs3rDPq4JtTiCqtYW27td6HVGoFH"
     },
     {
       "label": "participant-14",
       "role": "participant",
       "publicKey": "LhUnpztAEVPLpLV42BXCdofE6okpN4rTtPGAA4U7HuA",
       "participantId": 14,
-      "usdcAta": "Ahv35daxWbbtgzNP2LezDQPmGo4B9hRFDYHRsavQa2Hb",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "27Jn3J35y1wQdDx3zx5qPJp191NPd9tvUYBQWoEDjZG5jsgWcBUK3dSKvEAiLKN7pBV7P1o9ZUkFpNKj79s3XnGw"
-        }
-      ],
-      "solSignature": "2g6rhACCaBZDAc35Rda7TyZ3BsXvZXKKLDZpwpXiq6KBMDLwr1c4GXPybxYeRaYiFbNxqzFzxGAH7xqVzrg1woEH",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "Ahv35daxWbbtgzNP2LezDQPmGo4B9hRFDYHRsavQa2Hb",
+      "signature": "5RTQGHkoZnbHSXFAr6L5Ga4Vt2oUwmrdQ7GpqcvRYFgkyAZK3RWq5rXZqDR1waC4Df2rYySn4gpNN1WtXbTqaq2X"
     },
     {
       "label": "participant-15",
       "role": "participant",
       "publicKey": "5dKhEueLRz9MCQ13K9he5AxVFrNVCbqZm6R9W9SYPYP5",
       "participantId": 15,
-      "usdcAta": "FpRpQkX3tgWaf6osZ6zMPQQ5QPB3PAULf8rAd44r7Zcs",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "4kqiRsVQr2jr79vSHmYe7njsDuBqSLHtZ3vyq1Q9ZUmYoQqA9z6a8BmbucSj2NyYX4nQaBMrNC9FF7jwFP4CZVze"
-        }
-      ],
-      "solSignature": "5cronr9q9Bkra3UmCcggQN7S2h3YmoeiLo8vbT8g6LQui3MLXz5VnvgB97M3wHwgpL2eJi8Xo38VQ2bEitmtAE4f",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "FpRpQkX3tgWaf6osZ6zMPQQ5QPB3PAULf8rAd44r7Zcs",
+      "signature": "5ST5WJyJRRLHNomKZK1n6nTxTqQ33VfHQpsezRqGtVeVMPbfEMxhjjWjqbGqjMB3d9LcB5ruXCnjosJ15nZMLbSa"
     },
     {
       "label": "participant-16",
       "role": "participant",
       "publicKey": "6mzEmWkjHX6DhMjpvjJo4egqPMTW4BKvFSDauqNjngtj",
       "participantId": 16,
-      "usdcAta": "6niBdsQsrEeZDdXut34GzcZpihBFtKMobTjECMCdmyD9",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "4Bn2znbubNSNnRxb1jmV5K8735CB4VBUyeSZiY1HCATVuJqc2FZMMDFmMw7J2aVoJmeAZhJYQwBMU2g8KzDt63mH"
-        }
-      ],
-      "solSignature": "BiZpR2zF8p1FpayFEoP18ETNYYDrB8tAndBe4bwGY7ZBifpYCgCKq8rTEJn6UhH79hghxLrirC3gXV9vP7Jq6TS",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "6niBdsQsrEeZDdXut34GzcZpihBFtKMobTjECMCdmyD9",
+      "signature": "4z83V3YzzK1d1tUZfhwXdVHjjbXCEP4irG8LMU1eknKWXTHEDcf2PfHNVkj8roJpjKpkSakUK7eTCutuuMviec3k"
     },
     {
       "label": "participant-17",
       "role": "participant",
       "publicKey": "H3DgDNEmd5t7xuWxCTsKhwZfWvECSK1vhCRpWGMTa18y",
       "participantId": 17,
-      "usdcAta": "9sqCg1PJtza9BLRL8ubh2hmy5wiXkHZgN2qFHY2uMzUM",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "5D7yF3PAS2R8EXkoiZYRYJxUMkczhVA2w3HxEkyZQt6rWUwszce5osjqv4woeNPbTaHrKvXgK7ZDrG7m5bkkUT1W"
-        }
-      ],
-      "solSignature": "5BsewYHbzXLjYYbpdgDrzj6gE37S7F7PqFnvem2NzrwVPMbLHSxhiATegA2WHnRS9bXoPEnDfWtR6s5p62sv5DiP",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "9sqCg1PJtza9BLRL8ubh2hmy5wiXkHZgN2qFHY2uMzUM",
+      "signature": "3GfWBaMf2J3nzhFMQB2FdvioR2K3xgz9pMXXqkzUseegiGSSkLNpH7PqDniQjbtXetDjBDKea3fqr7ZQogjN5RD4"
     },
     {
       "label": "participant-18",
       "role": "participant",
       "publicKey": "6kaNErrGPwBoRk88oNfJxC1KX1AioSZhpgWCNfCfDH7b",
       "participantId": 18,
-      "usdcAta": "DedxXGCvpQn7dKsbbCpksZXkiNQxaPy2FAGvEURzTiot",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "5FiXHhayTVhcL36tj6FJKJWdrmaJwXacywXybq3mCyJL3Be3T8QxQG2rqLLZ1tzYm4NVAjK4dEjtg83AzUtAuS8X"
-        }
-      ],
-      "solSignature": "2LGDntw1uwBAzF4ZdmH1XaGcKUXi4hYtdkZ75qxRSDSwfnbz2g9x8oZbY1oS7m2Apvn1GqL6gUH8DxR2YaBMBobD",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 142208080
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "DedxXGCvpQn7dKsbbCpksZXkiNQxaPy2FAGvEURzTiot",
+      "signature": "4uoqYC9cHnp1eJk2faK3Cq5JJKb4TVQgxaSXy6cPfrKpHEKG5ojAm9ELnZL4bK9fd83A4TEgkm1LUbfXJP1j8drm"
     },
     {
       "label": "participant-19",
       "role": "participant",
       "publicKey": "A28R4FPCmSWkhnorbm1BY8i9qwqueiXsQSHSEtzcVKSJ",
       "participantId": 19,
-      "usdcAta": "B35ozxEp3FqRtrFWPTHeBrkoDGRJbkiVR9nDSYcnZF3N",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "jbXNhq6r4BsqWWZKiNzfyz6FGhpU7U9hsEAxDYjgJZQ7EVaBJMo6FENYWjM78jjrDLsrZx83MyXkWe5TtAAzCWJ"
-        }
-      ],
-      "solSignature": "5F5Rvpazc8Lpx38FDe1tYpSvoTuTy2Y9Kids2k6MvdYiGvy8J66WEtkbxgw1D9KeTMc7pmS3ku6DBCShpMikrrMj",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "B35ozxEp3FqRtrFWPTHeBrkoDGRJbkiVR9nDSYcnZF3N",
+      "signature": "65piCGvfvcncrHS3CooNd4aVwF8QmxnX7Q5S2ewqebaf7LtLFmxaRP3MB8oSjti569pnfhMogCFaDva5b6oPywFe"
     },
     {
       "label": "participant-20",
       "role": "participant",
       "publicKey": "AJxy33wpUhYTFNsrQrThYav1vDUWjoqZx8SaHkjXvhU2",
       "participantId": 20,
-      "usdcAta": "3uxt4JnzZQegJv5udqLfQBX1oSTb4cYBbDWCRB3XeX4c",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "efVGGUukg3p1vHi39fmmBTig5TG43XNUz7r6uz8h5SaB8rfMNRGBuBhVukSbWztBR86vdqh972Wp3pM5vVy6Li6"
-        }
-      ],
-      "solSignature": "3f3vWQPnkr8jXuEewEkH7PMhYhBp346xKKUyqAzSyLcWjDq2TT7Wh5gT97gzhVmP85b9rdSKaPiFxTAYNvPVXgRi",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "3uxt4JnzZQegJv5udqLfQBX1oSTb4cYBbDWCRB3XeX4c",
+      "signature": "h25SaVFttBbeLqe4diHENGJAH4iUa4yTSw44nB3cPnYtcMaju5BQmAsbwqQQpfXR3Sjndtc9X7dBNQnwWGgAT9H"
     },
     {
       "label": "participant-21",
       "role": "participant",
       "publicKey": "ECZLcxzzJUWFnatRoDQ4x6krkwT3bUPB44WZ81asUtyC",
       "participantId": 21,
-      "usdcAta": "2tBg19ySDvrUTEn586ArdG71RpiYSCe7Q7kdzZxZbm84",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "tAYQSgGCXxUjnC1ZSAm81zKuoiKMNsbqe1ScyDQizz7jpwk1iyBjPgu4Dscbabz3iG8DuFdq3r3Vqa95L1zwcBN"
-        }
-      ],
-      "solSignature": "5YWoE1RqvD7Mo1g8RrQsVy3kAJe977CGkp85tHK2mzFeYpoGLhcRad7dYh1etTbhmNRbpHfSqPVH14h5pipPuHEs",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "2tBg19ySDvrUTEn586ArdG71RpiYSCe7Q7kdzZxZbm84",
+      "signature": "3cudUAxsemwevM7Zo2fBWiuWvVRDvxE9WeSQLcfRSjkroL7QrWZdq2PgHaXuaC6gbPEB66q8yuJcFGRSH7Y7z61f"
     },
     {
       "label": "participant-22",
       "role": "participant",
       "publicKey": "7x4KbUnFwe3TNxov6h8w4ZqK5PSxnv4Zktye5gTZE4FU",
       "participantId": 22,
-      "usdcAta": "yPFQKmdsCCctqKd5XHM2j9hsK2cSuD91iVNTxVZZqJL",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "57CmCbhHPNwsDdUSBpZ8R2A2XaSGPTV8ok2z1Pysrq79yZp9cvxAQQc9U8sN84pvB4tXg388F1ChqQYW3ff9Ayv1"
-        }
-      ],
-      "solSignature": "4Zk21uBfWzPvtwTDRGzRaXPEzs5WKFCKPQBJz21jbExQeCLeXdVU38JjYH6D5zGzKqJHJ9xNVRfuYVXUx329yHXS",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "yPFQKmdsCCctqKd5XHM2j9hsK2cSuD91iVNTxVZZqJL",
+      "signature": "4sV4xvcgVwmkFBgPiXzQQs7w1E98PKrRSJ8bFcXEfSAPLNY27zzDL61vFvCvhZXHGEsYPFmKRBDZcBcoK37RsLWu"
     },
     {
       "label": "participant-23",
       "role": "participant",
       "publicKey": "E9D5sB1RcZHQZ6G5cy5XUKyZtvUG1VtqHCA51g65WUkK",
       "participantId": 23,
-      "usdcAta": "Gh6oRNX9tEvGGZpKWYz3zdwjxyLVk5KcxXcHvZSk8GCZ",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "2acYVBwgFHPnf2u4YqpE5sBwm83wNCef8buFgrTQoUVh1zA7iG8uPLTBeFtcuR1j47ojSwyyXY1YtFzdiTSPW6fu"
-        }
-      ],
-      "solSignature": "5NT7DSqeSgBJMsFVzRaEqUrJugJHwRqx9Aw77XYjq6SHmA47LXoKSrT92Fqp2phJG9LFx2wBGvyRjBFEcot4Reuv",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "Gh6oRNX9tEvGGZpKWYz3zdwjxyLVk5KcxXcHvZSk8GCZ",
+      "signature": "5H8y83mABALFzxC44UnBCKZde4fLeCdpgrnBGkhShgaAnz4CbTq86Qv4JLBM9mTPeimxm8sWtFTGWRKbwzHzyR1U"
     },
     {
       "label": "participant-24",
       "role": "participant",
       "publicKey": "C53JvG3dW47t2saXd44Z82V1tZQiMTBctKGn3DxMJ9jP",
       "participantId": 24,
-      "usdcAta": "6fB7F4cR7CSX4hhkfMGDGzAN7hhUQMR9gsr3mwdnkxQr",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "3ycsnUtY8Smf6u95BiPmNhMzr6hYwkdSjLcfeoRSaVEFoSBv1o3RxPJZNUTFdQGFTksbsMHxctvup3rJJG3hV3Zd"
-        }
-      ],
-      "solSignature": "atkPNakfnAtYZiACmUyaSbp898W7VkGENNeH3GtxhFwtGM9nARiyM87i2gtgzr3Q9GzqKfsMTLkEdvZ1tEzxm8v",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "6fB7F4cR7CSX4hhkfMGDGzAN7hhUQMR9gsr3mwdnkxQr",
+      "signature": "4X7PGecMTtg395i8iVv9KNzJ54nvU3xuKi13gQRVEqGFBFBXEN2mmTJwWjvWhWUM41FaGnjBjSZdzheKAjnvAnNU"
     },
     {
       "label": "participant-25",
       "role": "participant",
       "publicKey": "5drYsQw7FT69Xe2BQJJLWwnkGGBMLYtdjALXfWndbidX",
       "participantId": 25,
-      "usdcAta": "HTguT92hLaMD4HWzsd4DLds2UJZfpUdkDjQneQ3wsFoJ",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "29jFpQPfSHkNSZy7ssxkZGadPWJ2qEBmfWpCAtzNf5aiqEMbN7oSPSqxRxirjx5rWNdfHFx3H63wjr8sTa1RjwPd"
-        }
-      ],
-      "solSignature": "29wWU7sBAQ2THfAS2DZU9Ki7nDa2eFbjuQtFgUnBVUnZdUgXvnjw9HSGZ6aRY1X4mxPk6xMUavLLLcG7W1kXoCvC",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "HTguT92hLaMD4HWzsd4DLds2UJZfpUdkDjQneQ3wsFoJ",
+      "signature": "339KB6YKMmzUETiiMaAmPaSf7qC1x9npSGueb4TPU2aa54mTZHVEPVjmFoY7zatVSdRoQaGwx6HuAxW3fWz1Q64n"
     },
     {
       "label": "participant-26",
       "role": "participant",
       "publicKey": "5uuPtAmCydzHK92ChWYnhuPh6PRMZckhFH74G92dTmc3",
       "participantId": 26,
-      "usdcAta": "A6tJscPemVqKhxDZNzPJjLjykxmbEVvAU76AkXC6QrEM",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "3wTvh67YmAX4kQXN83P1hc4p8fCWNLUj9mGPNfiUficXsZAHXTFbcTGXW9LZRaW76Hcmtpxs3AFzbRUGerMJDGfV"
-        }
-      ],
-      "solSignature": "2sEGqtCAYkxY37T41uuhXCprjPXfD9ZMkMvGKhsKCRBFjmDvWzogR52dfgY4pHicRWWzbHdeCvkQhWyiHZ8AHzxT",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "A6tJscPemVqKhxDZNzPJjLjykxmbEVvAU76AkXC6QrEM",
+      "signature": "2uxinUmmgHjedffB7YhGvxCn5s6UeE1dEAx39da1Uw6mJudVoHdCAjZLbxtAp5UhgJwRKUGbRiXudSSucTqKevat"
     },
     {
       "label": "participant-27",
       "role": "participant",
       "publicKey": "DgudcrTAypndXaarAj5231uXx1t5ah62dXNTnRWe1GwM",
       "participantId": 27,
-      "usdcAta": "AJQv8auPbxFVaY2C2Pi4AdPrxndgMWxNn7GrJE4kyFa5",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "4wFGD8CazdvJidfWuY3EAmkgsXwri6ipVsRvic7zpPAPAYB81ProFe6isRZhYhDQaePoDPqwtL4CeAWniBrpejD9"
-        }
-      ],
-      "solSignature": "28uxpWkgCbUNyF5PKBFMVH89f3wEhBLjiaJStxKFMpV9JQHTzENmcfMr1YDQYNhxsd2ANWQqx1MrBg2b63G5n4Xd",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 142208080
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "AJQv8auPbxFVaY2C2Pi4AdPrxndgMWxNn7GrJE4kyFa5",
+      "signature": "2iAWQ96yo4cfpWiDwEUoYKxBrBhT9Z7pk7rzmJaCoUoL5N5YrZ5rEBa4JfV6Hr1X7x1vsGTpRUL46jRecV8SbDog"
     },
     {
       "label": "participant-28",
       "role": "participant",
       "publicKey": "FHUP9niuLwTLcxSCfHqkiyibdhJYrJeBbCha1rGtQSVa",
       "participantId": 28,
-      "usdcAta": "EpbdKaa8h5dZ75ySe1j3jzAChcgC94M8LGrh2iAbo9mX",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "t3HANWpR1L6xNXxaDfeXXHDME5gJVPbwzijeyHnZQad3k1PcCKffhfJ3MiqbdrgRZjtYTjUFLdWcYxwieqtFQjZ"
-        }
-      ],
-      "solSignature": "rTy8sLu5iNbU51e3Bp5dcpf4RbjfJskxsaBXDBVuJCsziTzmtXD5My8eGfkhDuD41EkEDWQMKYvQmzxXUqtXwHw",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "EpbdKaa8h5dZ75ySe1j3jzAChcgC94M8LGrh2iAbo9mX",
+      "signature": "wQzBGkmyTB5SHZ6bqdZeeQnYQkVtw6YuBetRprEXDE4PWPpENW28ZNyKUhK9qq4vcTQRP6oWTt3jHvXN5eFUyeD"
     },
     {
       "label": "participant-29",
       "role": "participant",
       "publicKey": "9GuN2zuyMSeavkQ9Xyw2s4fzRLRXQGVH9kWcR6K7kXQ4",
       "participantId": 29,
-      "usdcAta": "HouQayrVhpAmFvwFX8eAZzTY3DCaz1LyvDtKkBJf65Mt",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "4ojJfyHXcztWKXAAuaxBb1JLGyCAfvfeedHr6sxSCV5fkjTbNFWRBHRksrNMufK1cKFHnbMnwZyaVFQjEYXcpndC"
-        }
-      ],
-      "solSignature": "2tupEA1wxf9DaxXtGanN5LRr7vhGRebmzrq4pvUNnZQmjUsAXS44gBMr6qu81NizbSrbmpAvmVECYMTWKXhkCeq6",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "HouQayrVhpAmFvwFX8eAZzTY3DCaz1LyvDtKkBJf65Mt",
+      "signature": "3Z9a94qtcM5UnVoeKyiGmjDfYNDhMun5FR7u2zRxDNbL5CyFsdj2Fu1oxjapCDPGdwobYihwZauaen9HJmgsAfnH"
     },
     {
       "label": "participant-30",
       "role": "participant",
       "publicKey": "8Zcb3vDM8MEwQS5x7taDr9mffbNQ73QE8VTsKtXL5Ws1",
       "participantId": 30,
-      "usdcAta": "H5e8o1JQTFjEVx1umifLKDjpFnLmRSCBGtVQ7aPG65Nj",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "56tnWkRPJZTW8KbDLrHs9C7LS4CxrvhAxGWSz68VfRRypUMDZpPndgAfPXWuC2XQbAN3Xtr6uk2aShvFoNFctKBD"
-        }
-      ],
-      "solSignature": "3C4g5S5zkLyQ767iqex1mYf7vQhTY2HW88ZyMa86D65KtEUR883z9YUg3fPJQVsYe4vChtim1c2CvBLGqg9Eftnb",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "H5e8o1JQTFjEVx1umifLKDjpFnLmRSCBGtVQ7aPG65Nj",
+      "signature": "4kZE9Fr7pgTpzPYoc8RqYTuPfajPPFCV7SsTNCQcdwctqoRNgGpKKbmJyHKWNoVC9cFWckaYPeb894oPfGCQeRNK"
     },
     {
       "label": "participant-31",
       "role": "participant",
       "publicKey": "8kUxDkgr8aTni8MVANU8mCEmg9G2J46LTT1J9Ny9JKf1",
       "participantId": 31,
-      "usdcAta": "6Ym1JpPHPow1zVKSWGsh5JsDMA9x7kLFZnZjNGu7GZY2",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "j5JtVJ5NCqsPdikwzZuPTaqoUzjekx2gAfkhpgVGdaPiz1LNFNLeBXdMnuAFZmzCv3iv4LCUkjZv4hpioGh9Trb"
-        }
-      ],
-      "solSignature": "4jwG1Yuw646z3ankpU6rZ4UBu2i13F4XuiqUgFgte93hapHZ8Sx5tZqa3LXfdTkk4cyqwiAr8hmEKYW6rnQE1HDY",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "6Ym1JpPHPow1zVKSWGsh5JsDMA9x7kLFZnZjNGu7GZY2",
+      "signature": "2Sfqnc4gxFf5on9TLqgTTZEnYfLDpVwcr7tACqfJiPxSVbbUwZRPc347KQRup4LwmDGKove5x6rmJFHTecaJNYo3"
     },
     {
       "label": "participant-32",
       "role": "participant",
       "publicKey": "FKA1shR5ztSgunepqk2JhyLGJCGGKu2wNpGah6USsncr",
       "participantId": 32,
-      "usdcAta": "3hCTXKR72uYzYSccbJjKvW35tXHuVVYkD5Eb3dhEySGx",
-      "usdcTransfers": [
-        {
-          "amount": "2000000",
-          "signature": "4BwsEXWwRCPUTmmcDxwB4VYe5cVX1Bun2NZzP1jdo1zfvi5QnWGS4snTLQqikJzeaFG4UJ6iJ7xTiMZGDDnyfM3r"
-        }
-      ],
-      "solSignature": "5TkQVoeCLP34CzctpCPRfHULqwigkHuvsZpBNxrFNZ4amEt7eNdrBotF4CJEAn6gLYtP7myXAqFBqTFw6w1nxKPU",
-      "solLamportsSent": 100000000,
-      "usdcFinalAmount": "2000000",
-      "solFinalLamports": 210778000
+      "targetLamports": 100000000,
+      "targetTokenAmount": "2000000",
+      "tokenAccount": "3hCTXKR72uYzYSccbJjKvW35tXHuVVYkD5Eb3dhEySGx",
+      "signature": "3pgaagw89qAM3qJSKgMbieXoirFHpT2yFHMX8ERcjk3JT9XbeVJrHaHeTzQWLcvBkcproGXddhsj3hzv5UduUULt"
     }
-  ],
-  "completedAt": "2026-05-10T20:50:08.194Z"
+  ]
 }

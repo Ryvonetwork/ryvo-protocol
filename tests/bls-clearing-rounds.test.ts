@@ -19,6 +19,7 @@ import {
   findTokenRegistryPda,
   findVaultTokenAccountPda,
   getTokenBalance,
+  lockChannelFundsForTest,
   program,
   PRIMARY_TOKEN_ID,
   primaryMint,
@@ -45,6 +46,14 @@ const BLS_TEST_HEAP_FRAME_BYTES = 256 * 1024;
 type ParticipantFixture = Awaited<ReturnType<typeof createTestParticipant>> & {
   ownerTokenAccount: PublicKey;
   blsKeypair?: BlsKeypair;
+};
+
+type RoundBlock = {
+  participantId: number;
+  entries: {
+    payeeRef: number;
+    targetCumulative: anchor.BN;
+  }[];
 };
 
 function findGlobalConfigPda(): PublicKey {
@@ -297,6 +306,150 @@ async function settleRoundBls(
     .rpc();
 }
 
+function uniqueChannelMetas(
+  channels: Awaited<ReturnType<typeof ensureChannel>>[]
+) {
+  const seenBuckets = new Set<string>();
+  return channels.flatMap((channel) => {
+    const bucketKey = channel.channelPda.toString();
+    if (seenBuckets.has(bucketKey)) {
+      return [];
+    }
+    seenBuckets.add(bucketKey);
+    return [
+      {
+        pubkey: channel.channelPda,
+        isSigner: false,
+        isWritable: true,
+      },
+    ];
+  });
+}
+
+async function createRoutedClearingFixture() {
+  const alice = await createTestParticipant();
+  const bob = await createTestParticipant();
+  const carol = await createTestParticipant();
+  const aliceTokenAccount = await depositToParticipant(
+    alice.wallet,
+    alice.participantPda,
+    2_000_000
+  );
+
+  const group: ParticipantFixture[] = [
+    { ...alice, ownerTokenAccount: aliceTokenAccount },
+    { ...bob, ownerTokenAccount: PublicKey.default },
+    { ...carol, ownerTokenAccount: PublicKey.default },
+  ];
+
+  for (const participant of group.slice(0, 2)) {
+    const registration = await registerParticipantBlsKey({
+      owner: participant.wallet,
+      participantPda: participant.participantPda,
+      participant: participant.participant,
+    });
+    participant.blsKeypair = registration.blsKeypair;
+  }
+
+  const aliceToBob = await ensureChannel(
+    alice.wallet,
+    bob.wallet.publicKey,
+    PRIMARY_TOKEN_ID,
+    { payeeOwnerSigner: bob.wallet }
+  );
+  await lockChannelFundsForTest(aliceToBob, 1_000_000, alice.wallet);
+  const bobToCarol = await ensureChannel(
+    bob.wallet,
+    carol.wallet.publicKey,
+    PRIMARY_TOKEN_ID,
+    { payeeOwnerSigner: carol.wallet }
+  );
+
+  return { group, aliceToBob, bobToCarol };
+}
+
+function routedRoundBlocks(params: {
+  group: ParticipantFixture[];
+  aliceToBob: Awaited<ReturnType<typeof ensureChannel>>;
+  bobToCarol: Awaited<ReturnType<typeof ensureChannel>>;
+  aliceToBobDelta: number;
+  bobToCarolDelta: number;
+}): RoundBlock[] {
+  return [
+    {
+      participantId: params.group[0].participant.participantId,
+      entries: [
+        {
+          payeeRef: 1,
+          targetCumulative: params.aliceToBob.channel.settledCumulative.add(
+            new anchor.BN(params.aliceToBobDelta)
+          ),
+        },
+      ],
+    },
+    {
+      participantId: params.group[1].participant.participantId,
+      entries: [
+        {
+          payeeRef: 2,
+          targetCumulative: params.bobToCarol.channel.settledCumulative.add(
+            new anchor.BN(params.bobToCarolDelta)
+          ),
+        },
+      ],
+    },
+    {
+      participantId: params.group[2].participant.participantId,
+      entries: [],
+    },
+  ];
+}
+
+async function settleCustomClearingRound(params: {
+  group: ParticipantFixture[];
+  blocks: RoundBlock[];
+  channels: Awaited<ReturnType<typeof ensureChannel>>[];
+  signerIndexes: number[];
+}) {
+  const message = createClearingRoundMessage({
+    tokenId: PRIMARY_TOKEN_ID,
+    version: BLS_CLEARING_ROUND_MESSAGE_VERSION,
+    blocks: params.blocks,
+  });
+  const aggregateSignatureCompressed = aggregateBlsSignatures(
+    params.signerIndexes.map((index) => {
+      const blsKeypair = params.group[index].blsKeypair;
+      if (!blsKeypair) {
+        throw new Error("Missing BLS keypair in routed clearing fixture");
+      }
+      return signBlsMessage(blsKeypair, message);
+    })
+  );
+
+  await program.methods
+    .settleClearingRound(message, [...aggregateSignatureCompressed])
+    .accounts({
+      tokenRegistry: findTokenRegistryPda(),
+      globalConfig: findGlobalConfigPda(),
+      submitter: params.group[0].wallet.publicKey,
+      instructionsSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+    } as any)
+    .remainingAccounts([
+      ...orderedRoundParticipantBucketMetas(params.group),
+      ...uniqueChannelMetas(params.channels),
+    ])
+    .preInstructions([
+      ComputeBudgetProgram.requestHeapFrame({
+        bytes: BLS_TEST_HEAP_FRAME_BYTES,
+      }),
+      ComputeBudgetProgram.setComputeUnitLimit({
+        units: BLS_TEST_COMPUTE_UNIT_LIMIT,
+      }),
+    ])
+    .signers([params.group[0].wallet])
+    .rpc();
+}
+
 describe("BLS Clearing Rounds", () => {
   it("settles a 3 participant / 6 directed channel round through the BLS-only bucket path", async function () {
     this.timeout(180_000);
@@ -495,6 +648,119 @@ describe("BLS Clearing Rounds", () => {
           .signers([group[0].wallet])
           .rpc(),
       "ParticipantBlsKeyNotFound"
+    );
+  });
+
+  it("settles an atomic routed clearing round when the final recipient has no BLS key", async function () {
+    this.timeout(180_000);
+
+    const fixture = await createRoutedClearingFixture();
+    const { group, aliceToBob, bobToCarol } = fixture;
+    const before = await snapshotParticipantBalances(group);
+    const blocks = routedRoundBlocks({
+      ...fixture,
+      aliceToBobDelta: 1_000_000,
+      bobToCarolDelta: 1_000_000,
+    });
+
+    await settleCustomClearingRound({
+      group,
+      blocks,
+      channels: [aliceToBob, bobToCarol],
+      signerIndexes: [0, 1],
+    });
+
+    const after = await snapshotParticipantBalances(group);
+    expect(participantBalanceDeltas(before, after)).to.deep.equal([
+      0, 0, 1_000_000,
+    ]);
+
+    const aliceToBobAfter = await refetchDirectionalChannel(aliceToBob);
+    const bobToCarolAfter = await refetchDirectionalChannel(bobToCarol);
+    expect(aliceToBobAfter.settledCumulative.toNumber()).to.equal(1_000_000);
+    expect(aliceToBobAfter.lockedBalance.toNumber()).to.equal(0);
+    expect(bobToCarolAfter.settledCumulative.toNumber()).to.equal(1_000_000);
+    expect(bobToCarolAfter.lockedBalance.toNumber()).to.equal(0);
+  });
+
+  it("rejects an atomic routed clearing round when the middleman signature is missing", async function () {
+    this.timeout(180_000);
+
+    const fixture = await createRoutedClearingFixture();
+    const blocks = routedRoundBlocks({
+      ...fixture,
+      aliceToBobDelta: 1_000_000,
+      bobToCarolDelta: 1_000_000,
+    });
+
+    await expectProgramError(
+      () =>
+        settleCustomClearingRound({
+          group: fixture.group,
+          blocks,
+          channels: [fixture.aliceToBob, fixture.bobToCarol],
+          signerIndexes: [0],
+        }),
+      "InvalidBlsSignature"
+    );
+  });
+
+  it("rejects outbound clearing entries from a recipient without a BLS key", async function () {
+    this.timeout(180_000);
+
+    const fixture = await createRoutedClearingFixture();
+    const { group, aliceToBob } = fixture;
+    const blocks: RoundBlock[] = [
+      {
+        participantId: group[0].participant.participantId,
+        entries: [],
+      },
+      {
+        participantId: group[1].participant.participantId,
+        entries: [],
+      },
+      {
+        participantId: group[2].participant.participantId,
+        entries: [
+          {
+            payeeRef: 0,
+            targetCumulative: new anchor.BN(1_000_000),
+          },
+        ],
+      },
+    ];
+
+    await expectProgramError(
+      () =>
+        settleCustomClearingRound({
+          group,
+          blocks,
+          channels: [aliceToBob],
+          signerIndexes: [0, 1],
+        }),
+      "ParticipantBlsKeyNotFound"
+    );
+  });
+
+  it("rejects routed clearing when the middleman sends more than the incoming leg covers", async function () {
+    this.timeout(180_000);
+
+    const fixture = await createRoutedClearingFixture();
+    const blocks = routedRoundBlocks({
+      ...fixture,
+      aliceToBobDelta: 1_000_000,
+      bobToCarolDelta: 1_500_000,
+    });
+
+    await expectProgramError(
+      () =>
+        settleCustomClearingRound({
+          group: fixture.group,
+          blocks,
+          channels: [fixture.aliceToBob, fixture.bobToCarol],
+          signerIndexes: [0, 1],
+        }),
+      "InsufficientBalance"
     );
   });
 
